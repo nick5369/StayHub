@@ -62,7 +62,7 @@ function Hero() {
         </form>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default Hero
+export default Hero;
