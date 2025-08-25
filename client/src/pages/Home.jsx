@@ -5,6 +5,7 @@ function Home() {
   return (
     <>
       <Hero/>
+      <div>hello i am nick</div>
     </>
   )
 }
