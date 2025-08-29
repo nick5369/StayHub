@@ -17,6 +17,7 @@ const FeaturedDestination = () => {
       <Title
         title='Featured Destination'
         subtitle='Discover our handpicked selection of exceptional properties around the world, offering unparalleled luxury and unforgettable experiences'
+        align='center'
       />
 
       <div className='flex flex-wrap items-center justify-center gap-6 mt-20'>
