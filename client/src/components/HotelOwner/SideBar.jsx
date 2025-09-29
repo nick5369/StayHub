@@ -73,7 +73,7 @@ const Sidebar = () => {
     "bg-gray-200 text-gray-900 font-semibold shadow-sm";
 
   return (
-    <aside className="flex h-screen w-64 flex-col border-r bg-white">
+    <aside className="flex h-full w-64 flex-col border-r bg-white">
       {/* Navigation */}
       <div className="mt-6 flex flex-1 flex-col">
         <nav className="flex-1 space-y-1 px-3">

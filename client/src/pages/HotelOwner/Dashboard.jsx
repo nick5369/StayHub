@@ -52,7 +52,7 @@ const Dashboard = () => {
                     <h2 className="text-lg font-semibold text-gray-800">Recent Bookings</h2>
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="w-full text-base text-gray-700 border-4">
+                    <table className="w-full text-base text-gray-700 ">
                         <thead className="bg-gray-100">
                             <tr>
                                 <th className="px-6 py-4 text-center font-semibold text-gray-700 align-middle text-lg">
