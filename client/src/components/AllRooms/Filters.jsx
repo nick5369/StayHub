@@ -1,13 +1,8 @@
 import React, { useState } from "react";
 
 function Filters() {
-    // State for checkboxes
-    const [popularFilters, setPopularFilters] = useState({
-        single: false,
-        double: false,
-        luxury: false,
-        family: false,
-    });
+    // State for checkboxes: store selected room type strings
+    const [popularFilters, setPopularFilters] = useState([]);
 
     const [priceRange, setPriceRange] = useState({
         p1: false,
@@ -21,7 +16,7 @@ function Filters() {
 
     // Clear all filters
     const clearFilters = () => {
-        setPopularFilters({ single: false, double: false, luxury: false, family: false });
+        setPopularFilters([]);
         setPriceRange({ p1: false, p2: false, p3: false, p4: false });
         setSortBy("");
     };
@@ -45,12 +40,11 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={popularFilters.single}
+                            checked={popularFilters.includes('Single Bed')}
                             onChange={() =>
-                                setPopularFilters((prev) => ({
-                                    ...prev,
-                                    single: !prev.single,
-                                }))
+                                setPopularFilters((prev) =>
+                                    prev.includes('Single Bed') ? prev.filter(p => p !== 'Single Bed') : [...prev, 'Single Bed']
+                                )
                             }
                             className="mr-2"
                         />
@@ -59,12 +53,11 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={popularFilters.double}
+                            checked={popularFilters.includes('Double Bed')}
                             onChange={() =>
-                                setPopularFilters((prev) => ({
-                                    ...prev,
-                                    double: !prev.double,
-                                }))
+                                setPopularFilters((prev) =>
+                                    prev.includes('Double Bed') ? prev.filter(p => p !== 'Double Bed') : [...prev, 'Double Bed']
+                                )
                             }
                             className="mr-2"
                         />
@@ -73,12 +66,11 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={popularFilters.luxury}
+                            checked={popularFilters.includes('Luxury Room')}
                             onChange={() =>
-                                setPopularFilters((prev) => ({
-                                    ...prev,
-                                    luxury: !prev.luxury,
-                                }))
+                                setPopularFilters((prev) =>
+                                    prev.includes('Luxury Room') ? prev.filter(p => p !== 'Luxury Room') : [...prev, 'Luxury Room']
+                                )
                             }
                             className="mr-2"
                         />
@@ -87,12 +79,11 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={popularFilters.family}
+                            checked={popularFilters.includes('Family Suite')}
                             onChange={() =>
-                                setPopularFilters((prev) => ({
-                                    ...prev,
-                                    family: !prev.family,
-                                }))
+                                setPopularFilters((prev) =>
+                                    prev.includes('Family Suite') ? prev.filter(p => p !== 'Family Suite') : [...prev, 'Family Suite']
+                                )
                             }
                             className="mr-2"
                         />

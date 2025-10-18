@@ -109,27 +109,6 @@ const Sidebar = () => {
           </NavLink>
         </nav>
       </div>
-
-      {/* Footer (Logout) */}
-      <div className="border-t px-3 py-4">
-        <button className="w-full flex items-center gap-x-3 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-all duration-200">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1m0-10V5"
-            />
-          </svg>
-          Logout
-        </button>
-      </div>
     </aside>
   );
 };

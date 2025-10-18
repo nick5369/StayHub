@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { assets } from "../assets/assets";
 import { useClerk, useUser, UserButton } from "@clerk/clerk-react";
+import { useAppContext } from "../context/appContext.jsx";
 
 const Navbar = () => {
   const BookIcon = () => (
@@ -35,9 +36,11 @@ const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const { openSignIn } = useClerk();
-  const { user } = useUser();
+  // const { user } = useUser();
 
-  const navigate = useNavigate();
+  const {user, navigate,isOwner,setShowHotelReg} = useAppContext();
+
+  // const navigate = useNavigate();
   const location = useLocation();
 
   // 👉 hide navbar on dashboard
@@ -101,12 +104,12 @@ const Navbar = () => {
         ))}
         {user && (
           <button
-            onClick={() => navigate("/owner")}
+            onClick={ () =>  isOwner? navigate("/owner") : setShowHotelReg(true) }
             className={`border px-4 py-1 text-lg font-medium rounded-full cursor-pointer ${
               isScrolled || location.pathname !== "/" ? "text-black" : "text-white"
             } transition-all`}
           >
-            Dashboard
+            {isOwner ? "Dashboard": "List Your Hotel"}
           </button>
         )}
       </div>
@@ -189,9 +192,9 @@ const Navbar = () => {
         {user && (
           <button
             className="border px-4 py-1 text-lg font-medium rounded-full cursor-pointer transition-all"
-            onClick={() => navigate("/owner")}
+            onClick={() => isOwner ? navigate("/owner") : setShowHotelReg(true)}
           >
-            Dashboard
+            {isOwner ? "Dashboard" : "List Your Hotel"}
           </button>
         )}
 

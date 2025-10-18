@@ -36,15 +36,22 @@ export const createRoom = async (req, res) => {
 
 export const getRooms = async(req,res) =>{
     try {
-        const rooms = await Room.find({isAvailable:true}).populate({
-            path:'Hotel',
-            populate:{
-                path:'owner',
-                select: 'image'
-            }
-        }).sort({createdAt:-1});
-        
-        return res.json({success:true, rooms});
+        // Return available rooms. populate the 'hotel' field (it's the field name on Room schema)
+        const rooms = await Room.find({ isAvailable: true })
+            .populate({
+                path: 'hotel',
+                populate: {
+                    path: 'owner',
+                    select: 'image name'
+                }
+            })
+            .sort({ createdAt: -1 });
+
+        // Debugging: log number of rooms and a small sample so frontend devs can see the shape
+        console.log('getRooms - found rooms:', rooms.length);
+        if (rooms.length > 0) console.log('getRooms - sample room:', rooms[0]);
+
+        return res.json({ success: true, rooms });
 
     } catch (error) {
         return res.status(500).json({success:false,message:error.message});

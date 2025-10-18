@@ -1,8 +1,13 @@
 import React, { useState } from "react";
 import Title from "../../components/Title";
 import { X } from "lucide-react";
+import { useAppContext } from "../../context/appContext";
+import toast from "react-hot-toast";
 
 const Addroom = () => {
+
+  const {axios,getToken} = useAppContext();
+  const [isLoading,setIsLoading] = useState(false)
   const [Images, setImages] = useState({
     1: null,
     2: null,
@@ -49,9 +54,57 @@ const Addroom = () => {
     setImages((prev) => ({ ...prev, [index]: null }));
   };
 
-  const handleSubmit = (e) => {
+  
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("Form Data:", Inputs, Images);
+    setIsLoading(true);
+    try {
+      const token = await getToken();
+      const formData = new FormData();
+      formData.append("roomType", Inputs.roomType);
+      formData.append("pricePerNight", Inputs.pricePerNight);
+      formData.append("amenities", JSON.stringify(Inputs.amenities));
+      Object.values(Images).forEach((img, idx) => {
+        if (img) {
+          formData.append("images", img);
+        }
+      });
+      // Submit formData to backend using axios or fetch
+      const {data} = await axios.post('/api/rooms',formData,{
+        headers : {
+          Authorization : `Bearer ${await getToken()}`
+        }
+      })
+
+      if(data.success){
+        setInputs({
+          roomType: "",
+          pricePerNight: "",
+          amenities: {
+            "Free WiFi": false,
+            "Free Breakfast": false,
+            "Room Service": false,
+            "Mountain View": false,
+            "Pool Access": false,
+          },
+        })
+        setImages({
+          1: null,
+          2: null,
+          3: null,
+          4: null,  
+        })
+        toast.success("Room added successfully");
+      }
+      else{
+        toast.error(data.message);
+      }
+    } catch (error) {
+      console.error("Error adding room:", error);
+      toast.error(error.response?.data?.message || error.message || "Failed to add room");
+    } finally{
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -179,7 +232,7 @@ const Addroom = () => {
           type="submit"
           className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md"
         >
-          Add Room
+          { isLoading ? "Adding Room..." : "Add Room"}
         </button>
       </div>
     </form>

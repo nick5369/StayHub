@@ -1,6 +1,6 @@
-import User from "../models/User";
+import User from "../models/User.js";
 
-export const protect = async (req, res, next) => {
+const protect = async (req, res, next) => {
   const {userId} = req.auth;
   if(!userId) {
     return res.status(401).json({success: false, message: "Not authorized"});
@@ -10,3 +10,5 @@ export const protect = async (req, res, next) => {
     next();
   }
 };
+
+export default protect;

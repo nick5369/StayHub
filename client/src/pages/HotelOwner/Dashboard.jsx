@@ -1,10 +1,34 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Title from '../../components/Title'
 import { Building2, DollarSign } from "lucide-react";
 import { dashboardDummyData } from '../../assets/assets';
+import { useAppContext } from '../../context/appContext.jsx';
 
 const Dashboard = () => {
-    const [DashboardData] = useState(dashboardDummyData);
+    const { axios, user, getToken, toast, currency } = useAppContext();
+    const [DashboardData, setDashboardData] = useState({
+        totalBookings: 0,
+        totalRevenue: 0,
+        bookings: []
+    });
+
+    const fetchDashboardData = async () => {
+        try {
+            const { data } = await axios.get('/api/bookings/hotel', {
+                headers: {
+                    Authorization: `Bearer ${await getToken()}`
+                }
+            })
+            if (data.success) {
+                setDashboardData(data.dashboardData)
+            }
+            else {
+                toast.error(data.message);
+            }
+        } catch (error) {
+            toast.error(error.message);
+        }
+    }
 
     // Stat card component
     const StatCard = ({ icon: Icon, title, value, prefix }) => (
@@ -20,6 +44,12 @@ const Dashboard = () => {
             </div>
         </div>
     );
+
+    useEffect(() => {
+        if (user) {
+            fetchDashboardData();
+        }
+    }, [user])
 
     return (
         <div className="space-y-8">
@@ -42,7 +72,7 @@ const Dashboard = () => {
                     icon={DollarSign}
                     title="Total Revenue"
                     value={DashboardData.totalRevenue}
-                    prefix="$"
+                    prefix={currency}
                 />
             </div>
 
@@ -87,8 +117,8 @@ const Dashboard = () => {
                                     <td className="px-6 py-4 text-center align-middle text-base">
                                         <span
                                             className={`px-3 py-1.5 rounded-full text-sm font-semibold tracking-wide ${booking.isPaid
-                                                    ? "bg-green-100 text-green-700"
-                                                    : "bg-yellow-100 text-yellow-700"
+                                                ? "bg-green-100 text-green-700"
+                                                : "bg-yellow-100 text-yellow-700"
                                                 }`}
                                         >
                                             {booking.isPaid ? "Completed" : "Pending"}

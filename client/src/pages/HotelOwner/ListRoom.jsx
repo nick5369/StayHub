@@ -1,17 +1,79 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { roomsDummyData } from "../../assets/assets";
 import Title from "../../components/Title";
+import { useAppContext } from "../../context/appContext";
+import toast from "react-hot-toast";
 
 const ListRoom = () => {
-  const [rooms, setRooms] = useState(roomsDummyData);
+  const [ownerRooms, setOwnerRooms] = useState([]);
+  const {axios,getToken,user,currency} = useAppContext();
 
-  const handleToggle = (id) => {
-    setRooms((prev) =>
-      prev.map((room) =>
-        room._id === id ? { ...room, isAvailable: !room.isAvailable } : room
-      )
-    );
+  const fetchOwnerRooms = async() => {
+    try {
+      const {data} = await axios.get('/api/rooms/owner', {
+        headers : {
+          Authorization : `Bearer ${await getToken()}`
+        }
+      })
+      if(data.success){
+        console.log("Fetched rooms:", data.rooms); // Debug: see data structure
+        setOwnerRooms(data.rooms);
+      }
+      else{
+        toast.error(data.message);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || error.message || "Could not fetch rooms" );
+    }
+  }
+
+  const getAmenitiesDisplay = (amenities) => {
+    if (!amenities) return "No amenities";
+    
+    // If it's an object (like {Free WiFi: true, Pool: false})
+    if (typeof amenities === 'object' && !Array.isArray(amenities)) {
+      const selected = Object.keys(amenities).filter(key => amenities[key]);
+      return selected.length > 0 ? selected.join(", ") : "No amenities";
+    }
+    
+    // If it's an array
+    if (Array.isArray(amenities)) {
+      return amenities.length > 0 ? amenities.join(", ") : "No amenities";
+    }
+    
+    return "No amenities";
+  }
+
+  const handleToggle = async (roomId) => {
+
+    try {
+      const {data} = await axios.post('/api/rooms/toggle-availability',{roomId},{
+        headers : {
+          Authorization : `Bearer ${await getToken()}`
+        }
+      })
+      if(data.success){
+        fetchOwnerRooms();
+      }
+      else{
+        toast.error(data.message);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || error.message || "Could not toggle room availability");
+    }
+
+    // setRooms((prev) =>
+    //   prev.map((room) =>
+    //     room._id === id ? { ...room, isAvailable: !room.isAvailable } : room
+    //   )
+    // );
   };
+
+  useEffect(()=>{
+    if(user){
+      fetchOwnerRooms();
+    }
+  },[user])
 
   return (
     <div className="p-4">
@@ -34,17 +96,17 @@ const ListRoom = () => {
             </tr>
           </thead>
           <tbody>
-            {rooms.map((room) => (
+            {ownerRooms.map((room) => (
               <tr
                 key={room._id}
                 className="border-b last:border-0 text-sm text-gray-600"
               >
                 <td className="p-3 text-center align-middle">{room.roomType}</td>
                 <td className="p-3 text-center align-middle">
-                  {room.amenities.join(", ")}
+                  {getAmenitiesDisplay(room.amenities)}
                 </td>
                 <td className="p-3 text-center align-middle">
-                  {room.pricePerNight}
+                  {currency} {room.pricePerNight}
                 </td>
                 <td className="p-3 text-center align-middle">
                   <button
