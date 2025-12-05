@@ -1,11 +1,10 @@
-import React, { useState } from "react";
-import { roomsDummyData } from "../assets/assets";
+import React, { useMemo, useState } from "react";
 import Title from "../components/Title";
 import HotelCard from "../components/HotelCard";
-import Filters from "../components/AllRooms/Filters";
 import DetailRoomInfo from "../components/AllRooms/DetailRoomInfo";
 import { useAppContext } from "../context/appContext";
 import { useSearchParams } from "react-router-dom";
+// import { rooms } from "../assets/assets";
 
 const AllHotels = () => {
 
@@ -15,12 +14,8 @@ const AllHotels = () => {
   // store selected room type strings, e.g. ["Single Bed", "Luxury Room"]
   const [popularFilters, setPopularFilters] = useState([]);
 
-  const [priceRange, setPriceRange] = useState({
-    p1: false,
-    p2: false,
-    p3: false,
-    p4: false,
-  });
+  // store selected numeric ranges as strings like '0 to 500'
+  const [priceRange, setPriceRange] = useState([]);
 
   // State for radio
   const [sortBy, setSortBy] = useState("");
@@ -28,9 +23,16 @@ const AllHotels = () => {
   // Clear all filters
   const clearFilters = () => {
     setPopularFilters([]);
-    setPriceRange({ p1: false, p2: false, p3: false, p4: false });
+    setPriceRange([]);
     setSortBy("");
   };
+
+  const filterDestination = (room)=>{
+    const destination = searchParams.get("destination");
+    if(!destination) return true;
+    const city = String(room?.hotel?.city || '').toLowerCase();
+    return city.includes(destination.toLowerCase());
+  }
 
   const matchesRoomType = (room) =>{
     // if no type filters selected, every room matches
@@ -39,7 +41,31 @@ const AllHotels = () => {
     return popularFilters.includes(room.roomType);
   }
 
+  const matchesPriceRange = (room) =>{
+    return priceRange.length === 0 || priceRange.some(range =>{
+      const [min,max] = range.split(' to ').map(Number);
+      return room.pricePerNight >=min && room.pricePerNight <= max;
+    })
+  }
   
+  const sortRooms = (a,b) =>{
+    if(sortBy === 'low'){
+      return a.pricePerNight - b.pricePerNight;
+    }
+    else if(sortBy === 'high'){
+      return b.pricePerNight - a.pricePerNight;
+    }
+    else if(sortBy === 'new'){
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    }
+    return 0;
+  }
+
+  const filteredRooms = useMemo(()=>{
+    return rooms.filter(room =>matchesRoomType(room) && matchesPriceRange(room) && filterDestination(room)).sort(sortRooms);
+  },[rooms, popularFilters, priceRange, sortBy,searchParams]);
+
+
 
   return (
     <div className="px-6 md:px-16 lg:px-24 xl:px-32 py-24 pt-40 bg-slate-50">
@@ -56,8 +82,8 @@ const AllHotels = () => {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-10 mt-12">
         {/* Hotel Cards Section */}
         <div className="lg:col-span-3 flex flex-col gap-6">
-          {Array.isArray(roomsDummyData) && roomsDummyData.length > 0 ? (
-            roomsDummyData.map((room, index) => (
+          {Array.isArray(filteredRooms) && filteredRooms.length > 0 ? (
+            filteredRooms.map((room, index) => (
               <DetailRoomInfo key={room._id} room={room} index={index} />
             ))
           ) : (
@@ -143,46 +169,46 @@ const AllHotels = () => {
               <label>
                 <input
                   type="checkbox"
-                  checked={priceRange.p1}
+                  checked={priceRange.includes('0 to 500')}
                   onChange={() =>
-                    setPriceRange((prev) => ({ ...prev, p1: !prev.p1 }))
+                    setPriceRange(prev => prev.includes('0 to 500') ? prev.filter(p => p !== '0 to 500') : [...prev, '0 to 500'])
                   }
                   className="mr-2"
                 />
-                $0 to 500
+                $0 to $500
               </label>
               <label>
                 <input
                   type="checkbox"
-                  checked={priceRange.p2}
+                  checked={priceRange.includes('500 to 1000')}
                   onChange={() =>
-                    setPriceRange((prev) => ({ ...prev, p2: !prev.p2 }))
+                    setPriceRange(prev => prev.includes('500 to 1000') ? prev.filter(p => p !== '500 to 1000') : [...prev, '500 to 1000'])
                   }
                   className="mr-2"
                 />
-                $500 to 1000
+                $500 to $1000
               </label>
               <label>
                 <input
                   type="checkbox"
-                  checked={priceRange.p3}
+                  checked={priceRange.includes('1000 to 2000')}
                   onChange={() =>
-                    setPriceRange((prev) => ({ ...prev, p3: !prev.p3 }))
+                    setPriceRange(prev => prev.includes('1000 to 2000') ? prev.filter(p => p !== '1000 to 2000') : [...prev, '1000 to 2000'])
                   }
                   className="mr-2"
                 />
-                $1000 to 2000
+                $1000 to $2000
               </label>
               <label>
                 <input
                   type="checkbox"
-                  checked={priceRange.p4}
+                  checked={priceRange.includes('2000 to 3000')}
                   onChange={() =>
-                    setPriceRange((prev) => ({ ...prev, p4: !prev.p4 }))
+                    setPriceRange(prev => prev.includes('2000 to 3000') ? prev.filter(p => p !== '2000 to 3000') : [...prev, '2000 to 3000'])
                   }
                   className="mr-2"
                 />
-                $2000 to 3000
+                $2000 to $3000
               </label>
             </div>
           </div>

@@ -48,14 +48,29 @@ function DetailRoomInfo({ room, index }) {
 
           {/* Amenities */}
           <div className="flex flex-wrap gap-2">
-            {room.amenities.map((item, i) => (
-              <span
-                key={i}
-                className="px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-lg border"
-              >
-                {item}
-              </span>
-            ))}
+            {(() => {
+              // Normalize amenities: support both array and object shapes
+              const amenities = room?.amenities;
+              if (!amenities) return null;
+
+              let list = [];
+              if (Array.isArray(amenities)) {
+                list = amenities;
+              } else if (typeof amenities === 'object') {
+                // If the object is like {Free WiFi: true, Pool: false}
+                // collect keys with truthy values
+                list = Object.keys(amenities).filter(k => Boolean(amenities[k]));
+              }
+
+              return list.map((item, i) => (
+                <span
+                  key={i}
+                  className="px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-lg border"
+                >
+                  {item}
+                </span>
+              ));
+            })()}
           </div>
         </div>
 

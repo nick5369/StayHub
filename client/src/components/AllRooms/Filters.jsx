@@ -4,12 +4,8 @@ function Filters() {
     // State for checkboxes: store selected room type strings
     const [popularFilters, setPopularFilters] = useState([]);
 
-    const [priceRange, setPriceRange] = useState({
-        p1: false,
-        p2: false,
-        p3: false,
-        p4: false,
-    });
+    // store selected numeric ranges as strings like '0 to 500'
+    const [priceRange, setPriceRange] = useState([]);
 
     // State for radio
     const [sortBy, setSortBy] = useState("");
@@ -17,7 +13,7 @@ function Filters() {
     // Clear all filters
     const clearFilters = () => {
         setPopularFilters([]);
-        setPriceRange({ p1: false, p2: false, p3: false, p4: false });
+        setPriceRange([]);
         setSortBy("");
     };
 
@@ -99,9 +95,9 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={priceRange.p1}
+                            checked={priceRange.includes('0 to 500')}
                             onChange={() =>
-                                setPriceRange((prev) => ({ ...prev, p1: !prev.p1 }))
+                                setPriceRange(prev => prev.includes('0 to 500') ? prev.filter(p => p !== '0 to 500') : [...prev, '0 to 500'])
                             }
                             className="mr-2"
                         />
@@ -110,9 +106,9 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={priceRange.p2}
+                            checked={priceRange.includes('500 to 1000')}
                             onChange={() =>
-                                setPriceRange((prev) => ({ ...prev, p2: !prev.p2 }))
+                                setPriceRange(prev => prev.includes('500 to 1000') ? prev.filter(p => p !== '500 to 1000') : [...prev, '500 to 1000'])
                             }
                             className="mr-2"
                         />
@@ -121,9 +117,9 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={priceRange.p3}
+                            checked={priceRange.includes('1000 to 2000')}
                             onChange={() =>
-                                setPriceRange((prev) => ({ ...prev, p3: !prev.p3 }))
+                                setPriceRange(prev => prev.includes('1000 to 2000') ? prev.filter(p => p !== '1000 to 2000') : [...prev, '1000 to 2000'])
                             }
                             className="mr-2"
                         />
@@ -132,9 +128,9 @@ function Filters() {
                     <label>
                         <input
                             type="checkbox"
-                            checked={priceRange.p4}
+                            checked={priceRange.includes('2000 to 3000')}
                             onChange={() =>
-                                setPriceRange((prev) => ({ ...prev, p4: !prev.p4 }))
+                                setPriceRange(prev => prev.includes('2000 to 3000') ? prev.filter(p => p !== '2000 to 3000') : [...prev, '2000 to 3000'])
                             }
                             className="mr-2"
                         />

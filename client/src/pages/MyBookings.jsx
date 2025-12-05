@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Title from '../components/Title';
 import { userBookingsDummyData, facilityIcons } from '../assets/assets';
+import { useAppContext } from '../context/appContext';
+import toast from 'react-hot-toast';
 
 const BookIcon = () => (
   <svg
@@ -23,7 +25,32 @@ const BookIcon = () => (
 );
 
 const MyBookings = () => {
-  const [bookings, setBookings] = useState(userBookingsDummyData);
+
+  const {axios,getToken, user} = useAppContext();
+  const [bookings, setBookings] = useState([]);
+
+  const fetchUserBookings = async()=>{
+    try {
+      const {data} = await axios.get('/api/bookings/user',{
+        headers : {
+          Authorization : `Bearer ${await getToken()}`
+        }
+      })
+      if(data.success){
+        setBookings(data.bookings)
+      } else{
+        toast.error(data.message)
+      }
+    } catch (error) {
+      toast.error(error.message)
+    }
+  }
+
+  useEffect(()=>{
+    if(user){
+      fetchUserBookings();
+    }
+  }, [user])
 
   const handlePayNow = (bookingId) => {
     alert(`Redirecting to payment for booking ID: ${bookingId}`);

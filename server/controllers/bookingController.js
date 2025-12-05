@@ -1,3 +1,4 @@
+import transporter from "../configs/nodemailer.js";
 import Booking from "../models/Booking.js";
 import Hotel from "../models/Hotel.js";
 import Room from "../models/Room.js";
@@ -54,6 +55,28 @@ export const createBooking = async (req, res) => {
             checkInDate,checkOutDate,
             totalPrice,
         })
+
+        const mailOptions = {
+            from : process.env.SENDER_EMAIL,
+            to : req.user.email,
+            subject : 'Hotel Bookings Details - StayHub',
+            html : `
+                <h1>Booking Confirmed!</h1>
+                <p>Your booking for the room at ${roomData.hotel.name} has been confirmed.</p>
+                <h2>Booking Details:</h2>
+                <ul>
+                    <li><strong> Booking ID : </strong> ${booking._id}</li>
+                    <li><strong> Hotel Name :</strong> ${roomData.hotel.name} </li>
+                    <li> <strong> Location : </strong> ${roomData.hotel.address} </li>
+                    <li> <strong> Date : </strong> ${booking.checkInDate.toDateString()} </li>
+                    <li> <strong> Booking Amount : </strong> ${'$'} ${booking.totalPrice} /night</li> 
+                </ul>
+                <p>We look forward to hosting you!</p>
+            `
+        }
+
+        // transporter is a nodemailer transport object (not a function)
+        await transporter.sendMail(mailOptions)
 
         return res.json({success:true,message:"Booking successful"});
 

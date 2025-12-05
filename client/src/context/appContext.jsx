@@ -22,11 +22,16 @@ export const AppProvider = ({children}) => {
 
     const fetchRooms = async()=>{
         try {
-            const { data } = await axios.get('/api/rooms', {
-                headers: {
-                    Authorization: `Bearer ${await getToken()}`
-                }
-            });
+            // Only attach Authorization header when a token is available.
+            const headers = {};
+            try {
+                const token = await getToken();
+                if (token) headers.Authorization = `Bearer ${token}`;
+            } catch (err) {
+                // getToken can throw if user is not authenticated; ignore and fetch public rooms
+            }
+
+            const { data } = await axios.get('/api/rooms', { headers });
 
             // Debug: log the response so we can confirm the shape and contents
             // console.log('fetchRooms response', data);
