@@ -23,6 +23,12 @@ const protect = async (req, res, next) => {
     }
 
     const user = await User.findById(userId);
+    
+    if (!user) {
+      console.error('User not found in database:', userId);
+      return res.status(404).json({ success: false, message: "User not found in database" });
+    }
+    
     req.user = user;
     next();
   } catch (err) {

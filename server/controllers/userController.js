@@ -1,10 +1,14 @@
 export const getUserData = async (req, res) => {
     try {
+        if (!req.user) {
+            return res.status(404).json({success: false, message: "User not found"});
+        }
         const role = req.user.role;
         const recentSearchedCities = req.user.recentSearchedCities;
         res.json({success: true, role, recentSearchedCities});
 
     } catch (error) {
+        console.error('getUserData error:', error);
         res.status(500).json({success: false, message: error.message});
     }
 }
