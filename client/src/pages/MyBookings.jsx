@@ -26,19 +26,19 @@ const BookIcon = () => (
 
 const MyBookings = () => {
 
-  const {axios,getToken, user} = useAppContext();
+  const { axios, getToken, user } = useAppContext();
   const [bookings, setBookings] = useState([]);
 
-  const fetchUserBookings = async()=>{
+  const fetchUserBookings = async () => {
     try {
-      const {data} = await axios.get('/api/bookings/user',{
-        headers : {
-          Authorization : `Bearer ${await getToken()}`
+      const { data } = await axios.get('/api/bookings/user', {
+        headers: {
+          Authorization: `Bearer ${await getToken()}`
         }
       })
-      if(data.success){
+      if (data.success) {
         setBookings(data.bookings)
-      } else{
+      } else {
         toast.error(data.message)
       }
     } catch (error) {
@@ -46,14 +46,31 @@ const MyBookings = () => {
     }
   }
 
-  useEffect(()=>{
-    if(user){
+  const handlePayment = async (bookingId) => {
+    
+  }
+
+  useEffect(() => {
+    if (user) {
       fetchUserBookings();
     }
   }, [user])
 
-  const handlePayNow = (bookingId) => {
-    alert(`Redirecting to payment for booking ID: ${bookingId}`);
+  const handlePayNow = async (bookingId) => {
+    try {
+      const {data} = await axios.post('/api/bookings/stripe-payment', {bookingId},{
+        headers : {
+          Authorization: `Bearer ${await getToken()}`
+        }
+      })
+      if(data.success){
+        window.location.href = data.url;
+      }else{
+        toast.error(data.message);
+      }
+    } catch (error) {
+      toast.error(error.message);
+    }
   };
 
   return (
@@ -111,9 +128,8 @@ const MyBookings = () => {
               <div className="mt-4 md:mt-0 text-right flex flex-col items-end space-y-2">
                 <p className="font-semibold text-lg">Total: ${booking.totalPrice}</p>
                 <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    booking.isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                  }`}
+                  className={`px-3 py-1 rounded-full text-sm font-medium ${booking.isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}
                 >
                   {booking.isPaid ? "Paid" : "Unpaid"}
                 </span>
