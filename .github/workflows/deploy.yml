@@ -1,0 +1,45 @@
+name: Deploy StayHub to EC2
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Navigate to project folder
+            cd ~/StayHub
+
+            # Pull latest changes from master branch
+            git pull origin master
+
+            # --- 1. BACKEND DEPLOYMENT ---
+            cd ~/StayHub/server
+            npm install --production
+            pm2 restart hotel-api || pm2 start server.js --name "hotel-api"
+
+            # --- 2. FRONTEND DEPLOYMENT ---
+            cd ~/StayHub/client
+            npm install
+            npm run build
+
+            # Sync built files to Nginx directory & set permissions
+            sudo rm -rf /var/www/hotel-frontend/*
+            sudo cp -rf dist/* /var/www/hotel-frontend/
+            sudo chown -R www-data:www-data /var/www/hotel-frontend
+
+            # Reload Nginx
+            sudo systemctl reload nginx
