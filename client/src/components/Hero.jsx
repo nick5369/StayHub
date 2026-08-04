@@ -4,17 +4,13 @@ import { useAppContext } from '../context/appContext.jsx';
 
 function Hero() {
   const [destination,setDestination] = useState("");
-  const {axios,getToken,setSearchedCities,navigate} = useAppContext();
+  const {axios, setSearchedCities, navigate} = useAppContext();
 
   const onSearch = async(e) =>{
     e.preventDefault();
     navigate(`/rooms?destination=${destination}`);
     try {
-      await axios.post('/api/user/recent-searched-cities',{recentSearchedCity:destination},{
-        headers:{
-          Authorization: `Bearer ${await getToken()}`
-        }
-      })
+      await axios.post('/api/user/recent-searched-cities', {recentSearchedCity: destination})
       setSearchedCities(prev => {
         const updated = [...prev, destination];
         if(updated.length > 3){

@@ -5,7 +5,7 @@ import { dashboardDummyData } from '../../assets/assets';
 import { useAppContext } from '../../context/appContext.jsx';
 
 const Dashboard = () => {
-    const { axios, user, getToken, toast, currency } = useAppContext();
+    const { axios, user, toast, currency } = useAppContext();
     const [DashboardData, setDashboardData] = useState({
         totalBookings: 0,
         totalRevenue: 0,
@@ -14,11 +14,7 @@ const Dashboard = () => {
 
     const fetchDashboardData = async () => {
         try {
-            const { data } = await axios.get('/api/bookings/hotel', {
-                headers: {
-                    Authorization: `Bearer ${await getToken()}`
-                }
-            })
+            const { data } = await axios.get('/api/bookings/hotel')
             if (data.success) {
                 setDashboardData(data.dashboardData)
             }

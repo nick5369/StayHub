@@ -26,16 +26,12 @@ const BookIcon = () => (
 
 const MyBookings = () => {
 
-  const { axios, getToken, user } = useAppContext();
+  const { axios, user } = useAppContext();
   const [bookings, setBookings] = useState([]);
 
   const fetchUserBookings = async () => {
     try {
-      const { data } = await axios.get('/api/bookings/user', {
-        headers: {
-          Authorization: `Bearer ${await getToken()}`
-        }
-      })
+      const { data } = await axios.get('/api/bookings/user')
       if (data.success) {
         setBookings(data.bookings)
       } else {
@@ -58,11 +54,7 @@ const MyBookings = () => {
 
   const handlePayNow = async (bookingId) => {
     try {
-      const {data} = await axios.post('/api/bookings/stripe-payment', {bookingId},{
-        headers : {
-          Authorization: `Bearer ${await getToken()}`
-        }
-      })
+      const {data} = await axios.post('/api/bookings/stripe-payment', {bookingId})
       if(data.success){
         window.location.href = data.url;
       }else{

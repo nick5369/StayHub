@@ -1,33 +1,40 @@
-import Hotel from "../models/Hotel.js";
-import {v2 as cloudinary} from "cloudinary";
-import Room from "../models/Room.js";
+// controllers/roomController.js
 
+import prisma from "../configs/db.js";
+import { v2 as cloudinary } from "cloudinary";
 
+// POST /api/rooms/create
+// Creates a new room under the authenticated user's hotel.
+// Response shape unchanged: { success, message }
 export const createRoom = async (req, res) => {
     try {
-        const {roomType, pricePerNight, amenities} = req.body;
-        const hotel = await Hotel.findOne({owner: req.user._id});
+        const { roomType, pricePerNight, amenities } = req.body;
 
-        if(!hotel){
-            return res.status(400).json({success: false, message: "No hotel found for this owner"});
+        const hotel = await prisma.hotel.findFirst({
+            where: { ownerId: req.user.id },
+        });
+
+        if (!hotel) {
+            return res.status(400).json({ success: false, message: "No hotel found for this owner" });
         }
 
-        const uploadImages = req.files.map(async(file)=>{
+        // Upload each file to Cloudinary and collect the secure URLs.
+        const uploadImages = req.files.map(async (file) => {
             const response = await cloudinary.uploader.upload(file.path);
             return response.secure_url;
-        })
+        });
 
         const images = await Promise.all(uploadImages);
 
-        // Normalize amenities to an array of strings
+        // Normalize amenities to an array of strings.
+        // amenities may be a JSON string when sent via multipart/form-data.
         let parsedAmenities = amenities;
         try {
-            // amenities may be a JSON string when sent via multipart/form-data
             if (typeof amenities === 'string') {
                 parsedAmenities = JSON.parse(amenities);
             }
         } catch (err) {
-            // leave parsedAmenities as the original string; we'll handle below
+            // leave parsedAmenities as the original string; handled below
         }
 
         if (!Array.isArray(parsedAmenities)) {
@@ -35,75 +42,119 @@ export const createRoom = async (req, res) => {
                 // object like {"Free WiFi": true, "Pool": false}
                 parsedAmenities = Object.keys(parsedAmenities).filter(k => Boolean(parsedAmenities[k]));
             } else if (typeof parsedAmenities === 'string') {
-                // single comma-separated string -> split
                 parsedAmenities = parsedAmenities.split(',').map(s => s.trim()).filter(Boolean);
             } else {
                 parsedAmenities = [];
             }
         }
 
-        await Room.create({
-            hotel: hotel._id,
-            roomType,
-            pricePerNight: +pricePerNight,
-            amenities: parsedAmenities,
-            images
+        await prisma.room.create({
+            data: {
+                hotelId: hotel.id,
+                roomType,
+                pricePerNight: +pricePerNight,
+                amenities: parsedAmenities,
+                images,
+            },
         });
 
-        return res.json({success: true, message: "Room created successfully"});
+        return res.json({ success: true, message: "Room created successfully" });
 
     } catch (error) {
-        return res.status(500).json({success: false, message: "Server error"});
+        console.error('createRoom error:', error);
+        return res.status(500).json({ success: false, message: "Server error" });
     }
-
 }
 
-export const getRooms = async(req,res) =>{
+// GET /api/rooms
+// Returns all available rooms with their hotel and hotel owner info.
+//
+// Response shape is equivalent to the Mongoose .populate({ path: 'hotel', populate: { path: 'owner' } }) result:
+//   room.hotel.owner.image  →  room.hotel.owner.image   ✓
+//   room.hotel.owner.name   →  room.hotel.owner.username (NOTE: Mongo model used 'username', frontend should use 'username')
+//
+// NOTE: Mongoose selected `name` but the User model field is actually `username`.
+// The Prisma response uses `username` — consistent with the Mongoose model definition.
+export const getRooms = async (req, res) => {
     try {
         console.log('🔍 getRooms: Fetching available rooms...');
-        
-        // Return available rooms. populate the 'hotel' field (it's the field name on Room schema)
-        const rooms = await Room.find({ isAvailable: true })
-            .populate({
-                path: 'hotel',
-                populate: {
-                    path: 'owner',
-                    select: 'image name'
-                }
-            })
-            .sort({ createdAt: -1 });
+
+        const rooms = await prisma.room.findMany({
+            where: { isAvailable: true },
+            include: {
+                hotel: {
+                    include: {
+                        owner: {
+                            select: {
+                                id: true,
+                                image: true,
+                                username: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
 
         console.log(`✅ getRooms: Found ${rooms.length} rooms`);
-
         return res.json({ success: true, rooms });
 
     } catch (error) {
         console.error('❌ getRooms Error:', error);
-        return res.status(500).json({success:false,message:error.message});
+        return res.status(500).json({ success: false, message: error.message });
     }
 }
 
-export const getOwnerRooms = async(req,res) =>{
+// GET /api/rooms/owner
+// Returns all rooms belonging to the authenticated user's hotel.
+// Response shape unchanged: { success, rooms } where each room includes hotel data.
+export const getOwnerRooms = async (req, res) => {
     try {
-        const hotelData = await Hotel.findOne({owner:req.user._id});
-        if(!hotelData){
-            return res.status(400).json({success:false,message:"No hotel found"});
+        const hotel = await prisma.hotel.findFirst({
+            where: { ownerId: req.user.id },
+        });
+
+        if (!hotel) {
+            return res.status(400).json({ success: false, message: "No hotel found" });
         }
-        const rooms = await Room.find({hotel:hotelData._id.toString()}).populate('hotel');
-        return res.json({success:true,rooms});
+
+        const rooms = await prisma.room.findMany({
+            where: { hotelId: hotel.id },
+            include: { hotel: true },
+        });
+
+        return res.json({ success: true, rooms });
+
     } catch (error) {
-        return res.status(500).json({success:false,message:error.message});
+        return res.status(500).json({ success: false, message: error.message });
     }
 }
 
-export const toggleRoomAvailability = async(req,res) =>{
+// POST /api/rooms/toggle-availability
+// Flips a room's isAvailable flag.
+// Response shape unchanged: { success, message }
+export const toggleRoomAvailability = async (req, res) => {
     try {
-        const {roomId} = req.body;
-        const room = await Room.findById(roomId);
-        room.isAvailable = !room.isAvailable;
-        await room.save();
-        return res.json({success:true,message:"Room availability updated"});
+        const { roomId } = req.body;
+
+        // Fetch current value then flip — mirrors the original room.isAvailable = !room.isAvailable logic.
+        const room = await prisma.room.findUnique({
+            where: { id: roomId },
+        });
+
+        if (!room) {
+            return res.status(404).json({ success: false, message: "Room not found" });
+        }
+
+        await prisma.room.update({
+            where: { id: roomId },
+            data: { isAvailable: !room.isAvailable },
+        });
+
+        return res.json({ success: true, message: "Room availability updated" });
+
     } catch (error) {
-        return res.status(500).json({success:false,message:error.message});
+        return res.status(500).json({ success: false, message: error.message });
     }
 }

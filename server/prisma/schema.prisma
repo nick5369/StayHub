@@ -1,0 +1,142 @@
+// server/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  user
+  admin
+  hotelOwner
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+model User {
+  // Internal UUID primary key — keeps FK relationships stable and type-uniform.
+  id      String   @id @default(uuid())
+
+  username             String
+  email                String   @unique
+  image                String   @default("")
+  role                 UserRole @default(user)
+
+  // Self-hosted auth fields
+  passwordHash         String
+  isVerified           Boolean  @default(false)
+  otp                  String?  // bcrypt hash of the 6-digit OTP
+  otpExpiry            DateTime?
+
+  // Simple capped array (max 3 in application logic). Native Postgres text[]
+  // is sufficient — no JSONB overhead needed for a flat string list.
+  recentSearchedCities String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hotels   Hotel[]
+  bookings Booking[]
+}
+
+model Hotel {
+  id      String @id @default(uuid())
+  name    String
+  address String
+  contact String
+  city    String
+
+  // FK to User.id (UUID), not User.clerkId, for relational integrity.
+  owner   User   @relation(fields: [ownerId], references: [id])
+  ownerId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms    Room[]
+  bookings Booking[]
+}
+
+model Room {
+  id            String  @id @default(uuid())
+  hotel         Hotel   @relation(fields: [hotelId], references: [id])
+  hotelId       String
+  roomType      String
+  pricePerNight Float
+
+  // Both amenities and images are simple [String] arrays in Mongoose.
+  // Postgres native text[] is a clean 1-to-1 mapping — no child table needed
+  // because neither is ever filtered/joined on individual elements.
+  amenities String[] @default([])
+  images    String[] @default([])
+
+  isAvailable Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings Booking[]
+}
+
+model Booking {
+  id String @id @default(uuid())
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  room   Room   @relation(fields: [roomId], references: [id])
+  roomId String
+
+  hotel   Hotel  @relation(fields: [hotelId], references: [id])
+  hotelId String
+
+  checkInDate  DateTime
+  checkOutDate DateTime
+
+  totalPrice Float
+  guests     Int
+
+  status BookingStatus @default(pending)
+
+  // Default matches the original Mongoose schema default.
+  paymentMethod String  @default("Pay At Hotel")
+  isPaid        Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ---------------------------------------------------------------------------
+  // Overlapping booking prevention:
+  //
+  // Application-layer guard: checkAvailability() in bookingController.js
+  // queries for any booking on the same roomId where:
+  //   existingCheckIn  <= newCheckOut   AND
+  //   existingCheckOut >= newCheckIn
+  //
+  // DB-level guarantee (optional, add after initial migration):
+  //   1. Enable btree_gist extension:  CREATE EXTENSION IF NOT EXISTS btree_gist;
+  //   2. Add EXCLUDE constraint:
+  //      ALTER TABLE "Booking"
+  //        ADD CONSTRAINT no_overlapping_bookings
+  //        EXCLUDE USING gist (
+  //          "roomId" WITH =,
+  //          tsrange("checkInDate", "checkOutDate", '[)') WITH &&
+  //        );
+  // ---------------------------------------------------------------------------
+}

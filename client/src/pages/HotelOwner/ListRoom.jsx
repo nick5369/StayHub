@@ -6,15 +6,11 @@ import toast from "react-hot-toast";
 
 const ListRoom = () => {
   const [ownerRooms, setOwnerRooms] = useState([]);
-  const {axios,getToken,user,currency} = useAppContext();
+  const {axios, user, currency} = useAppContext();
 
   const fetchOwnerRooms = async() => {
     try {
-      const {data} = await axios.get('/api/rooms/owner', {
-        headers : {
-          Authorization : `Bearer ${await getToken()}`
-        }
-      })
+      const {data} = await axios.get('/api/rooms/owner')
       if(data.success){
         console.log("Fetched rooms:", data.rooms); // Debug: see data structure
         setOwnerRooms(data.rooms);
@@ -47,11 +43,7 @@ const ListRoom = () => {
   const handleToggle = async (roomId) => {
 
     try {
-      const {data} = await axios.post('/api/rooms/toggle-availability',{roomId},{
-        headers : {
-          Authorization : `Bearer ${await getToken()}`
-        }
-      })
+      const {data} = await axios.post('/api/rooms/toggle-availability',{roomId})
       if(data.success){
         fetchOwnerRooms();
       }
