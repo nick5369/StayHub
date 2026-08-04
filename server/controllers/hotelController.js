@@ -1,22 +1,40 @@
-import Hotel from "../models/Hotel.js";
-import User from "../models/User.js";
+// controllers/hotelController.js
 
-export const registerHotel = async (req,res)=>{
+import prisma from "../configs/db.js";
+
+// POST /api/hotels/register
+// Creates a hotel for the authenticated user and promotes them to hotelOwner.
+// Response shape unchanged: { success, message }
+export const registerHotel = async (req, res) => {
     try {
-        const {name,address,contact,city} = req.body;
-        const owner = req.user._id;
+        const { name, address, contact, city } = req.body;
 
-        const hotel = await Hotel.findOne({owner});
-        if(hotel){
-            return res.status(400).json({success:false,message:"Hotel Already Registered"})
+        // req.user.id is the internal UUID (set by authMiddleware via Prisma lookup).
+        const ownerId = req.user.id;
+
+        // One hotel per owner constraint — mirrors original Hotel.findOne({ owner }).
+        const existing = await prisma.hotel.findFirst({
+            where: { ownerId },
+        });
+
+        if (existing) {
+            return res.status(400).json({ success: false, message: "Hotel Already Registered" });
         }
-        await Hotel.create({name,address,contact,city,owner});
-        await User.findByIdAndUpdate(owner,{role:"hotelOwner"});
-        res.json({success:true,message:"Hotel Registered Successfully"})
+
+        await prisma.hotel.create({
+            data: { name, address, contact, city, ownerId },
+        });
+
+        // Promote user role to hotelOwner — mirrors original User.findByIdAndUpdate(owner, { role: 'hotelOwner' }).
+        await prisma.user.update({
+            where: { id: ownerId },
+            data: { role: "hotelOwner" },
+        });
+
+        res.json({ success: true, message: "Hotel Registered Successfully" });
 
     } catch (error) {
         console.error("Error registering hotel:", error);
-        res.status(500).json({success:false,message:error.message || "Internal Server Error"}) 
+        res.status(500).json({ success: false, message: error.message || "Internal Server Error" });
     }
 }
-

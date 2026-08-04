@@ -1,117 +1,113 @@
 import axios from "axios";
-import {  createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-// import {useUser,useAuth} from "./userContext.jsx";
 import toast from "react-hot-toast";
-import { useAuth, useUser } from "@clerk/clerk-react";
 
 axios.defaults.baseURL = import.meta.env.VITE_BACKEND_URL;
+// Send the HttpOnly cookie on every request automatically
+axios.defaults.withCredentials = true;
 
 const Appcontext = createContext();
 
-export const AppProvider = ({children}) => {
-    const currency = import.meta.env.VITE_CURRENCY;
-    const navigate = useNavigate();
-    const {user} = useUser();
-    const {getToken} = useAuth();
-    
-    const [isOwner,setIsOwner] = useState(false);
-    const [showHotelReg, setShowHotelReg] = useState(false);
-    const [searchedCities, setSearchedCities] = useState([]);
-    const [rooms, setRooms] = useState([]);
+export const AppProvider = ({ children }) => {
+  const currency = import.meta.env.VITE_CURRENCY;
+  const navigate = useNavigate();
 
-    const fetchRooms = async()=>{
-        try {
-            // Only attach Authorization header when a token is available.
-            const headers = {};
-            try {
-                const token = await getToken();
-                if (token) headers.Authorization = `Bearer ${token}`;
-            } catch (err) {
-                // getToken can throw if user is not authenticated; ignore and fetch public rooms
-            }
+  const [user, setUser] = useState(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [showHotelReg, setShowHotelReg] = useState(false);
+  const [searchedCities, setSearchedCities] = useState([]);
+  const [rooms, setRooms] = useState([]);
 
-            const { data } = await axios.get('/api/rooms', { headers });
+  /** Called after a successful login / OTP verification */
+  const login = (userData) => {
+    setUser(userData);
+    setIsOwner(userData.role === "hotelOwner");
+  };
 
-            // Debug: log the response so we can confirm the shape and contents
-            // console.log('fetchRooms response', data);
-
-            if (data?.success) {
-                setRooms(Array.isArray(data.rooms) ? data.rooms : []);
-            } else {
-                toast.error(data?.message || 'Could not fetch rooms');
-            }
-
-        } catch (error) {
-            console.error('fetchRooms error', error);
-            toast.error(error.message);
-        }
+  /** Clears client state and asks the server to clear the cookie */
+  const logout = async () => {
+    try {
+      await axios.post("/api/auth/logout");
+    } catch (_) {
+      // ignore network errors on logout
     }
+    setUser(null);
+    setIsOwner(false);
+    setSearchedCities([]);
+    navigate("/");
+  };
 
-    const fetchUser = async()=> {
-        try {
-            const {data} = await axios.get('/api/user',{
-                headers: {
-                    Authorization: `Bearer ${await getToken()}`
-                }
-            });
-            if(data.success){
-                setIsOwner(data.role === 'hotelOwner');
-                setSearchedCities(data.recentSearchedCities);
-            }else{
-                setTimeout(()=>{
-                    fetchUser
-                },5000);
-            }
-        } catch (error) {
-            toast.error("Could not fetch user data" + error.message)
-        }
+  const fetchRooms = async () => {
+    try {
+      const { data } = await axios.get("/api/rooms");
+      if (data?.success) {
+        setRooms(Array.isArray(data.rooms) ? data.rooms : []);
+      } else {
+        toast.error(data?.message || "Could not fetch rooms");
+      }
+    } catch (error) {
+      console.error("fetchRooms error", error);
+      toast.error(error.message);
     }
+  };
 
-    useEffect(()=>{
-        // initial fetch
-        fetchRooms();
-
-    // Poll for updates every 10 seconds so clients see new rooms without a manual reload
-    const POLL_INTERVAL = 10000; // ms
-        const intervalId = setInterval(() => {
-            fetchRooms();
-        }, POLL_INTERVAL);
-
-        return () => clearInterval(intervalId);
-    },[])
-
-    useEffect(()=>{
-        if(user){
-            fetchUser();
-        }
-    },[user])
-
-
-    const value = {
-        currency,
-        isOwner,
-        setIsOwner,
-        showHotelReg,
-        setShowHotelReg,
-        toast,
-        axios,
-        navigate,
-        user,
-        getToken,
-        searchedCities,
-        setSearchedCities,
-        rooms,
-        setRooms
+  const fetchUser = async () => {
+    try {
+      const { data } = await axios.get("/api/user");
+      if (data.success) {
+        setUser({
+          id: data.id,
+          username: data.username,
+          email: data.email,
+          image: data.image,
+          role: data.role,
+        });
+        setIsOwner(data.role === "hotelOwner");
+        setSearchedCities(data.recentSearchedCities);
+      }
+    } catch (error) {
+      // 401 is expected when the user is not logged in — don't show toast
+      if (error.response?.status !== 401) {
+        console.error("fetchUser error:", error.message);
+      }
     }
+  };
 
-    return (
-        <Appcontext.Provider value={value}>
-            {children}
-        </Appcontext.Provider>
-    )
-}
+  // Restore session on mount by hitting the protected /api/user endpoint.
+  // If the HttpOnly cookie is still valid the server returns user data.
+  useEffect(() => {
+    fetchUser();
+  }, []);
+
+  // Fetch rooms once on mount
+  useEffect(() => {
+    fetchRooms();
+  }, []);
+
+  const value = {
+    currency,
+    user,
+    setUser,
+    isOwner,
+    setIsOwner,
+    showHotelReg,
+    setShowHotelReg,
+    toast,
+    axios,
+    navigate,
+    login,
+    logout,
+    searchedCities,
+    setSearchedCities,
+    rooms,
+    setRooms,
+    fetchUser,
+  };
+
+  return <Appcontext.Provider value={value}>{children}</Appcontext.Provider>;
+};
 
 export const useAppContext = () => {
-    return useContext(Appcontext);
-}
+  return useContext(Appcontext);
+};

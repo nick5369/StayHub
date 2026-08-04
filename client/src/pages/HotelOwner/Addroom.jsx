@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 
 const Addroom = () => {
 
-  const {axios,getToken} = useAppContext();
+  const {axios} = useAppContext();
   const [isLoading,setIsLoading] = useState(false)
   const [Images, setImages] = useState({
     1: null,
@@ -59,22 +59,14 @@ const Addroom = () => {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const token = await getToken();
       const formData = new FormData();
       formData.append("roomType", Inputs.roomType);
       formData.append("pricePerNight", Inputs.pricePerNight);
       formData.append("amenities", JSON.stringify(Inputs.amenities));
-      Object.values(Images).forEach((img, idx) => {
-        if (img) {
-          formData.append("images", img);
-        }
+      Object.values(Images).forEach((img) => {
+        if (img) formData.append("images", img);
       });
-      // Submit formData to backend using axios or fetch
-      const {data} = await axios.post('/api/rooms',formData,{
-        headers : {
-          Authorization : `Bearer ${await getToken()}`
-        }
-      })
+      const {data} = await axios.post('/api/rooms', formData)
 
       if(data.success){
         setInputs({

@@ -46,17 +46,12 @@ function HotelReg({ onClose }) {
       [name]: value,
     }));
   };
-  const { setShowHotelReg, axios, getToken, setIsOwner } = useAppContext();
+  const { setShowHotelReg, axios, setIsOwner } = useAppContext();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const token = await getToken();
-      const { data } = await axios.post('/api/hotels', formData, { 
-        headers: { 
-          Authorization: `Bearer ${await getToken()}` 
-        } 
-      });
+      const { data } = await axios.post('/api/hotels', formData);
       if(data.success){
         setIsOwner(true);
         setShowHotelReg(false);

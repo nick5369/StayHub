@@ -1,39 +1,39 @@
-import User from "../models/User.js";
+// middlewares/authMiddleware.js
+//
+// Reads the JWT from the HttpOnly cookie named "token" and looks up the user
+// in the database. Sets req.user to the Prisma User object on success.
+
+import jwt from "jsonwebtoken";
+import prisma from "../configs/db.js";
 
 const protect = async (req, res, next) => {
   try {
-    // Clerk's middleware may attach `req.auth` as a function `req.auth()`
-    // or as an object depending on versions/config. Handle both.
-    let authInfo = null;
-    if (typeof req.auth === 'function') {
-      // Some Clerk versions provide req.auth() as a sync function
-      try {
-        authInfo = req.auth();
-      } catch (e) {
-        // If it throws or requires async, fall back to awaiting if it's async
-        authInfo = await req.auth();
-      }
-    } else {
-      authInfo = req.auth;
+    const token = req.cookies?.token;
+
+    if (!token) {
+      return res.status(401).json({ success: false, message: "Not authorized — please log in" });
     }
 
-    const { userId } = authInfo || {};
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Not authorized" });
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: "Session expired — please log in again" });
     }
 
-    const user = await User.findById(userId);
-    
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+    });
+
     if (!user) {
-      console.error('User not found in database:', userId);
-      return res.status(404).json({ success: false, message: "User not found in database" });
+      return res.status(401).json({ success: false, message: "User not found" });
     }
-    
+
     req.user = user;
     next();
   } catch (err) {
-    console.error('authMiddleware error', err && err.message ? err.message : err);
-    return res.status(401).json({ success: false, message: 'Not authorized' });
+    console.error("authMiddleware error:", err.message);
+    return res.status(401).json({ success: false, message: "Not authorized" });
   }
 };
 

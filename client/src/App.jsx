@@ -12,6 +12,7 @@ import Layout from './pages/HotelOwner/Layout'
 import Dashboard from './pages/HotelOwner/Dashboard'
 import Addroom from './pages/HotelOwner/Addroom'
 import ListRoom from './pages/HotelOwner/ListRoom'
+import Auth from './pages/Auth'
 import { Toaster } from 'react-hot-toast'
 import { useAppContext } from './context/appContext'
 import Loader from './components/Loader'
@@ -30,6 +31,7 @@ function App() {
       <div className='flex-grow'>
         <Routes>
           <Route path='/' element={<Home/>} />
+          <Route path='/auth' element={<Auth/>} />
           <Route path='/rooms' element={<AllRooms/>} />
           <Route path='/rooms/:id' element={<RoomDetails />} />
           <Route path='/my-bookings' element={<MyBookings />} />
