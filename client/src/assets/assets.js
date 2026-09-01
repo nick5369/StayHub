@@ -85,9 +85,9 @@ export const cities = [
 
 // Exclusive Offers Dummy Data
 export const exclusiveOffers = [
-    { _id: 1, title: "Summer Escape Package", description: "Enjoy a complimentary night and daily breakfast", priceOff: 25, expiryDate: "Aug 31", image: exclusiveOfferCardImg1 },
-    { _id: 2, title: "Romantic Getaway", description: "Special couples package including spa treatment", priceOff: 20, expiryDate: "Sep 20", image: exclusiveOfferCardImg2 },
-    { _id: 3, title: "Luxury Retreat", description: "Book 60 days in advance and save on your stay at any of our luxury properties worldwide.", priceOff: 30, expiryDate: "Sep 25", image: exclusiveOfferCardImg3 },
+    { id: 1, title: "Summer Escape Package", description: "Enjoy a complimentary night and daily breakfast", priceOff: 25, expiryDate: "Aug 31", image: exclusiveOfferCardImg1 },
+    { id: 2, title: "Romantic Getaway", description: "Special couples package including spa treatment", priceOff: 20, expiryDate: "Sep 20", image: exclusiveOfferCardImg2 },
+    { id: 3, title: "Luxury Retreat", description: "Book 60 days in advance and save on your stay at any of our luxury properties worldwide.", priceOff: 30, expiryDate: "Sep 25", image: exclusiveOfferCardImg3 },
 ]
 
 // Testimonials Dummy Data
@@ -116,7 +116,7 @@ export const roomCommonData = [
 
 // User Dummy Data
 export const userDummyData = {
-    "_id": "user_2unqyL4diJFP1E3pIBnasc7w8hP",
+    "id": "user_2unqyL4diJFP1E3pIBnasc7w8hP",
     "username": "Nick Patel",
     "email": "user.greatstack@gmail.com",
     "image": "https://img.clerk.com/eyJ0eXBlIjoicHJveHkiLCJzcmMiOiJodHRwczovL2ltYWdlcy5jbGVyay5kZXYvdXBsb2FkZWQvaW1nXzJ2N2c5YVpSSEFVYVUxbmVYZ2JkSVVuWnFzWSJ9",
@@ -131,7 +131,7 @@ export const userDummyData = {
 
 // Hotel Dummy Data
 export const hotelDummyData = {
-    "_id": "67f76393197ac559e4089b72",
+    "id": "67f76393197ac559e4089b72",
     "name": "Urbanza Suites",
     "address": "Main Road  123 Street , 23 Colony",
     "contact": "+0123456789",
@@ -145,7 +145,7 @@ export const hotelDummyData = {
 // Rooms Dummy Data
 export const roomsDummyData = [
     {
-        "_id": "67f7647c197ac559e4089b96",
+        "id": "67f7647c197ac559e4089b96",
         "hotel": hotelDummyData,
         "roomType": "Double Bed",
         "pricePerNight": 399,
@@ -157,7 +157,7 @@ export const roomsDummyData = [
         "__v": 0
     },
     {
-        "_id": "67f76452197ac559e4089b8e",
+        "id": "67f76452197ac559e4089b8e",
         "hotel": hotelDummyData,
         "roomType": "Double Bed",
         "pricePerNight": 299,
@@ -169,7 +169,7 @@ export const roomsDummyData = [
         "__v": 0
     },
     {
-        "_id": "67f76406197ac559e4089b82",
+        "id": "67f76406197ac559e4089b82",
         "hotel": hotelDummyData,
         "roomType": "Double Bed",
         "pricePerNight": 249,
@@ -181,7 +181,7 @@ export const roomsDummyData = [
         "__v": 0
     },
     {
-        "_id": "67f763d8197ac559e4089b7a",
+        "id": "67f763d8197ac559e4089b7a",
         "hotel": hotelDummyData,
         "roomType": "Single Bed",
         "pricePerNight": 199,
@@ -199,7 +199,7 @@ export const roomsDummyData = [
 // User Bookings Dummy Data
 export const userBookingsDummyData = [
     {
-        "_id": "67f76839994a731e97d3b8ce",
+        "id": "67f76839994a731e97d3b8ce",
         "user": userDummyData,
         "room": roomsDummyData[1],
         "hotel": hotelDummyData,
@@ -215,7 +215,7 @@ export const userBookingsDummyData = [
         "__v": 0
     },
     {
-        "_id": "67f76829994a731e97d3b8c3",
+        "id": "67f76829994a731e97d3b8c3",
         "user": userDummyData,
         "room": roomsDummyData[0],
         "hotel": hotelDummyData,
@@ -231,7 +231,7 @@ export const userBookingsDummyData = [
         "__v": 0
     },
     {
-        "_id": "67f76810994a731e97d3b8b4",
+        "id": "67f76810994a731e97d3b8b4",
         "user": userDummyData,
         "room": roomsDummyData[3],
         "hotel": hotelDummyData,

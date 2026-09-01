@@ -68,7 +68,7 @@ const RoomDetails = () => {
     }
 
     useEffect(()=>{
-        const temp = rooms.find((r) => String(r._id) === String(id));
+        const temp = rooms.find((r) => String(r.id) === String(id));
         temp && setRoom(temp)
         temp && setSelectedImg(temp.images[0]);
     },[rooms])

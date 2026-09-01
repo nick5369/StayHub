@@ -10,7 +10,7 @@ const AllHotels = () => {
 
   const { rooms, currency } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [openFilters, setOpenFilters] = useState(false);
+
   // store selected room type strings, e.g. ["Single Bed", "Luxury Room"]
   const [popularFilters, setPopularFilters] = useState([]);
 
@@ -84,7 +84,7 @@ const AllHotels = () => {
         <div className="lg:col-span-3 flex flex-col gap-6">
           {Array.isArray(filteredRooms) && filteredRooms.length > 0 ? (
             filteredRooms.map((room, index) => (
-              <DetailRoomInfo key={room._id} room={room} index={index} />
+              <DetailRoomInfo key={room.id} room={room} index={index} />
             ))
           ) : (
             <div className="text-gray-500">No rooms available.</div>

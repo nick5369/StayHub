@@ -25,7 +25,7 @@ const FeaturedDestination = () => {
       <div className='flex flex-wrap items-center justify-center gap-6 mt-20'>
         {Array.isArray(rooms) && rooms.length > 0 ? (
           rooms.slice(0, 4).map((room, index) => (
-            <HotelCard key={room._id} room={room} index={index} />
+            <HotelCard key={room.id} room={room} index={index} />
           ))
         ) : (
           <div className='text-gray-500 py-8'>No featured rooms to display right now.</div>

@@ -79,7 +79,7 @@ const MyBookings = () => {
         <div className="space-y-6">
           {bookings.map((booking) => (
             <div
-              key={booking._id}
+              key={booking.id}
               className="flex flex-col md:flex-row items-start md:items-center justify-between p-4 bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-300"
             >
               {/* Left section: Image */}
@@ -127,7 +127,7 @@ const MyBookings = () => {
                 </span>
                 {!booking.isPaid && (
                   <button
-                    onClick={() => handlePayNow(booking._id)}
+                    onClick={() => handlePayNow(booking.id)}
                     className="mt-2 px-5 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition"
                   >
                     Pay Now

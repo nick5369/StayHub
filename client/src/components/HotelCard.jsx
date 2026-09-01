@@ -4,9 +4,9 @@ import { Link } from "react-router-dom";
 const HotelCard = ({ room, index }) => {
   return (
     <Link
-      to={"/rooms/" + room._id}
+      to={"/rooms/" + room.id}
       onClick={() => scrollTo(0, 0)}
-      key={room._id}
+      key={room.id}
       className="rounded-2xl overflow-hidden shadow-lg w-80 bg-white transform transition-transform duration-300 hover:scale-98 hover:shadow-md"
     >
       <div>

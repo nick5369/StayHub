@@ -10,7 +10,7 @@ function DetailRoomInfo({ room, index }) {
   return (
     <div
       className="flex flex-col md:flex-row gap-6 bg-white rounded-2xl shadow-md overflow-hidden p-4 cursor-pointer hover:shadow-lg transition"
-      onClick={()=> navigate(`/rooms/${room._id}`)}
+      onClick={()=> navigate(`/rooms/${room.id}`)}
     >
       {/* Left Column: Image */}
       <div className="w-full md:w-1/2">

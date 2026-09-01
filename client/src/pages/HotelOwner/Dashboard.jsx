@@ -98,7 +98,7 @@ const Dashboard = () => {
                         <tbody className="divide-y divide-gray-200">
                             {DashboardData.bookings.map((booking) => (
                                 <tr
-                                    key={booking._id}
+                                    key={booking.id}
                                     className="hover:bg-gray-50 transition-all duration-150"
                                 >
                                     <td className="px-6 py-4 text-center align-middle font-medium text-gray-900 text-base">

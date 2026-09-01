@@ -56,7 +56,7 @@ const ListRoom = () => {
 
     // setRooms((prev) =>
     //   prev.map((room) =>
-    //     room._id === id ? { ...room, isAvailable: !room.isAvailable } : room
+    //     room.id === id ? { ...room, isAvailable: !room.isAvailable } : room
     //   )
     // );
   };
@@ -90,7 +90,7 @@ const ListRoom = () => {
           <tbody>
             {ownerRooms.map((room) => (
               <tr
-                key={room._id}
+                key={room.id}
                 className="border-b last:border-0 text-sm text-gray-600"
               >
                 <td className="p-3 text-center align-middle">{room.roomType}</td>
@@ -102,7 +102,7 @@ const ListRoom = () => {
                 </td>
                 <td className="p-3 text-center align-middle">
                   <button
-                    onClick={() => handleToggle(room._id)}
+                    onClick={() => handleToggle(room.id)}
                     className={`w-12 h-6 mx-auto flex items-center rounded-full p-1 transition ${
                       room.isAvailable ? "bg-blue-500" : "bg-gray-300"
                     }`}
