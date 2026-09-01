@@ -43,16 +43,6 @@ const MyBookings = () => {
   }
 
   const handlePayment = async (bookingId) => {
-    
-  }
-
-  useEffect(() => {
-    if (user) {
-      fetchUserBookings();
-    }
-  }, [user])
-
-  const handlePayNow = async (bookingId) => {
     try {
       const {data} = await axios.post('/api/bookings/stripe-payment', {bookingId})
       if(data.success){
@@ -64,6 +54,12 @@ const MyBookings = () => {
       toast.error(error.message);
     }
   };
+
+  useEffect(() => {
+    if (user) {
+      fetchUserBookings();
+    }
+  }, [user])
 
   return (
     <div className="max-w-6xl mx-auto p-6 mt-20">
@@ -118,7 +114,7 @@ const MyBookings = () => {
 
               {/* Right section: Payment & status */}
               <div className="mt-4 md:mt-0 text-right flex flex-col items-end space-y-2">
-                <p className="font-semibold text-lg">Total: ${booking.totalPrice}</p>
+                <p className="font-semibold text-lg">Total: ${Number(booking.totalPrice).toFixed(2)}</p>
                 <span
                   className={`px-3 py-1 rounded-full text-sm font-medium ${booking.isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                     }`}
@@ -127,7 +123,7 @@ const MyBookings = () => {
                 </span>
                 {!booking.isPaid && (
                   <button
-                    onClick={() => handlePayNow(booking.id)}
+                    onClick={() => handlePayment(booking.id)}
                     className="mt-2 px-5 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition"
                   >
                     Pay Now

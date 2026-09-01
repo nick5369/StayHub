@@ -22,13 +22,13 @@ function Footer() {
 
         {/* Social Links (optional) */}
         <div className="flex space-x-6 mt-4">
-          <a href="#" className="hover:text-white transition-colors text-sm">
+          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
             Instagram
           </a>
-          <a href="#" className="hover:text-white transition-colors text-sm">
+          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
             Twitter
           </a>
-          <a href="#" className="hover:text-white transition-colors text-sm">
+          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
             Facebook
           </a>
         </div>
@@ -38,7 +38,7 @@ function Footer() {
       <div className="border-t border-gray-600">
         <div className="max-w-7xl mx-auto px-6 py-3 text-center text-xs text-gray-400">
           
-            StayHub - Hotel Booking ©2025. All rights reserved.
+            StayHub - Hotel Booking ©{new Date().getFullYear()}. All rights reserved.
         </div>
       </div>
     </footer>

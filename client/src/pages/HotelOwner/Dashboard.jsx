@@ -67,7 +67,7 @@ const Dashboard = () => {
                 <StatCard
                     icon={DollarSign}
                     title="Total Revenue"
-                    value={DashboardData.totalRevenue}
+                    value={Number(DashboardData.totalRevenue).toFixed(2)}
                     prefix={currency}
                 />
             </div>
@@ -108,7 +108,7 @@ const Dashboard = () => {
                                         {booking.room.roomType}
                                     </td>
                                     <td className="px-6 py-4 text-center align-middle font-semibold text-gray-800 text-base">
-                                        ${booking.totalPrice}
+                                        ${Number(booking.totalPrice).toFixed(2)}
                                     </td>
                                     <td className="px-6 py-4 text-center align-middle text-base">
                                         <span

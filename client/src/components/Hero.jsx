@@ -4,11 +4,20 @@ import { useAppContext } from '../context/appContext.jsx';
 
 function Hero() {
   const [destination,setDestination] = useState("");
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  const [guests, setGuests] = useState("");
   const {axios, setSearchedCities, navigate} = useAppContext();
 
   const onSearch = async(e) =>{
     e.preventDefault();
-    navigate(`/rooms?destination=${destination}`);
+    const params = new URLSearchParams();
+    if(destination) params.append('destination', destination);
+    if(checkIn) params.append('checkIn', checkIn);
+    if(checkOut) params.append('checkOut', checkOut);
+    if(guests) params.append('guests', guests);
+    
+    navigate(`/rooms?${params.toString()}`);
     try {
       await axios.post('/api/user/recent-searched-cities', {recentSearchedCity: destination})
       setSearchedCities(prev => {
@@ -60,7 +69,7 @@ function Hero() {
                     <img src={assets.calenderIcon} className='h-4' />
                     <label htmlFor="checkIn">Check in</label>
                 </div>
-                <input id="checkIn" type="date" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none" />
+                <input id="checkIn" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} type="date" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none" min={new Date().toISOString().split("T")[0]} />
             </div>
 
             <div>
@@ -68,12 +77,12 @@ function Hero() {
                     <img src={assets.calenderIcon} className='h-4' />
                     <label htmlFor="checkOut">Check out</label>
                 </div>
-                <input id="checkOut" type="date" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none" />
+                <input id="checkOut" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} type="date" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none" min={checkIn} disabled={!checkIn} />
             </div>
 
             <div className='flex md:flex-col max-md:gap-2 max-md:items-center'>
                 <label htmlFor="guests">Guests</label>
-                <input min={1} max={4} id="guests" type="number" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none  max-w-16" placeholder="0" />
+                <input min={1} max={4} value={guests} onChange={(e) => setGuests(e.target.value)} id="guests" type="number" className=" rounded border border-gray-200 px-3 py-1.5 mt-1.5 text-sm outline-none  max-w-16" placeholder="0" />
             </div>
 
             <button type='submit' className='flex items-center justify-center gap-1 rounded-md bg-black py-3 px-4 text-white my-auto cursor-pointer max-md:w-full max-md:py-1' >

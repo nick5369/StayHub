@@ -98,7 +98,7 @@ const ListRoom = () => {
                   {getAmenitiesDisplay(room.amenities)}
                 </td>
                 <td className="p-3 text-center align-middle">
-                  {currency} {room.pricePerNight}
+                  {currency} {Number(room.pricePerNight).toFixed(2)}
                 </td>
                 <td className="p-3 text-center align-middle">
                   <button

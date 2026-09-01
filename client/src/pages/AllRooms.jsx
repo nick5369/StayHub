@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import Title from "../components/Title";
 import HotelCard from "../components/HotelCard";
 import DetailRoomInfo from "../components/AllRooms/DetailRoomInfo";
@@ -8,8 +8,47 @@ import { useSearchParams } from "react-router-dom";
 
 const AllHotels = () => {
 
-  const { rooms, currency } = useAppContext();
+  const { rooms, currency, axios } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const checkIn = searchParams.get('checkIn');
+  const checkOut = searchParams.get('checkOut');
+  const guests = searchParams.get('guests');
+
+  const [availableRoomIds, setAvailableRoomIds] = useState(null);
+  const [isFilteringAvailability, setIsFilteringAvailability] = useState(false);
+
+  useEffect(() => {
+    const checkAvailability = async () => {
+      if (checkIn && checkOut && rooms.length > 0) {
+        setIsFilteringAvailability(true);
+        try {
+          const availabilityPromises = rooms.map(async (room) => {
+            try {
+              const { data } = await axios.post('/api/bookings/check-availability', {
+                room: room.id,
+                checkInDate: checkIn,
+                checkOutDate: checkOut
+              });
+              return { id: room.id, isAvailable: data.success && data.isAvailable };
+            } catch (err) {
+              return { id: room.id, isAvailable: false };
+            }
+          });
+          const results = await Promise.all(availabilityPromises);
+          const availableIds = results.filter(r => r.isAvailable).map(r => r.id);
+          setAvailableRoomIds(availableIds);
+        } catch (error) {
+          console.error("Error checking availability", error);
+        } finally {
+          setIsFilteringAvailability(false);
+        }
+      } else {
+        setAvailableRoomIds(null);
+      }
+    };
+    checkAvailability();
+  }, [checkIn, checkOut, rooms, axios]);
 
   // store selected room type strings, e.g. ["Single Bed", "Luxury Room"]
   const [popularFilters, setPopularFilters] = useState([]);
@@ -44,16 +83,16 @@ const AllHotels = () => {
   const matchesPriceRange = (room) =>{
     return priceRange.length === 0 || priceRange.some(range =>{
       const [min,max] = range.split(' to ').map(Number);
-      return room.pricePerNight >=min && room.pricePerNight <= max;
-    })
+      return Number(room.pricePerNight) >= min && Number(room.pricePerNight) <= max;
+    });
   }
   
   const sortRooms = (a,b) =>{
     if(sortBy === 'low'){
-      return a.pricePerNight - b.pricePerNight;
+      return Number(a.pricePerNight) - Number(b.pricePerNight);
     }
     else if(sortBy === 'high'){
-      return b.pricePerNight - a.pricePerNight;
+      return Number(b.pricePerNight) - Number(a.pricePerNight);
     }
     else if(sortBy === 'new'){
       return new Date(b.createdAt) - new Date(a.createdAt);
@@ -61,9 +100,20 @@ const AllHotels = () => {
     return 0;
   }
 
+  const filterGuests = (room) => {
+    if (!guests) return true;
+    if (room.capacity && room.capacity < Number(guests)) return false;
+    return true;
+  };
+
+  const filterAvailability = (room) => {
+    if (!checkIn || !checkOut || !availableRoomIds) return true;
+    return availableRoomIds.includes(room.id);
+  };
+
   const filteredRooms = useMemo(()=>{
-    return rooms.filter(room =>matchesRoomType(room) && matchesPriceRange(room) && filterDestination(room)).sort(sortRooms);
-  },[rooms, popularFilters, priceRange, sortBy,searchParams]);
+    return rooms.filter(room =>matchesRoomType(room) && matchesPriceRange(room) && filterDestination(room) && filterGuests(room) && filterAvailability(room)).sort(sortRooms);
+  },[rooms, popularFilters, priceRange, sortBy, searchParams, availableRoomIds]);
 
 
 
@@ -82,7 +132,9 @@ const AllHotels = () => {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-10 mt-12">
         {/* Hotel Cards Section */}
         <div className="lg:col-span-3 flex flex-col gap-6">
-          {Array.isArray(filteredRooms) && filteredRooms.length > 0 ? (
+          {isFilteringAvailability ? (
+            <div className="text-gray-500 text-center mt-10">Checking room availability...</div>
+          ) : Array.isArray(filteredRooms) && filteredRooms.length > 0 ? (
             filteredRooms.map((room, index) => (
               <DetailRoomInfo key={room.id} room={room} index={index} />
             ))

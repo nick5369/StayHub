@@ -3,16 +3,42 @@ import { useAppContext } from '../context/appContext'
 import { useParams } from 'react-router-dom';
 
 function Loader() {
-  const { navigate } = useAppContext();
+  const { navigate, axios } = useAppContext();
   const { nextUrl } = useParams();
 
   useEffect(() => {
     if (nextUrl) {
-      setTimeout(() => {
-        navigate(`/${nextUrl}`);
-      }, 8000);
+      let attempts = 0;
+      const maxAttempts = 10;
+      
+      const poll = async () => {
+        attempts++;
+        try {
+          const { data } = await axios.get('/api/bookings/user');
+          if (data.success && data.bookings && data.bookings.length > 0) {
+            const latestBooking = data.bookings[0];
+            if (latestBooking.isPaid) {
+              clearInterval(intervalId);
+              navigate(`/${nextUrl}`);
+              return;
+            }
+          }
+        } catch (error) {
+          console.error("Polling error", error);
+        }
+        
+        if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+          navigate(`/${nextUrl}`);
+        }
+      };
+
+      poll();
+      const intervalId = setInterval(poll, 2000);
+
+      return () => clearInterval(intervalId);
     }
-  }, [nextUrl])
+  }, [nextUrl, navigate, axios]);
 
   return (
     <div className="flex flex-col items-center justify-center h-screen gap-4">

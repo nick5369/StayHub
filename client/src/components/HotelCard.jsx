@@ -1,4 +1,4 @@
-import { FaStar } from "react-icons/fa";
+
 import { Link } from "react-router-dom";
 
 const HotelCard = ({ room, index }) => {
@@ -24,10 +24,7 @@ const HotelCard = ({ room, index }) => {
               {room.hotel.name}
             </h2>
             <div className="flex items-center text-orange-500">
-              <FaStar className="w-4 h-4" />
-              <span className="ml-1 text-sm font-medium">
-                {room.hotel.rating}
-              </span>
+              {/* TODO(Task 8): real average rating */}
             </div>
           </div>
 
@@ -37,7 +34,7 @@ const HotelCard = ({ room, index }) => {
           {/* Price & Button */}
           <div className="flex justify-between items-center pt-2">
             <p className="text-lg font-bold text-gray-800">
-              ${room.pricePerNight}
+              ${Number(room.pricePerNight).toFixed(2)}
               <span className="text-sm text-gray-500"> / night</span>
             </p>
             <button className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-xl text-sm font-medium">

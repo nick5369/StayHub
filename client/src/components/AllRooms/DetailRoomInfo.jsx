@@ -76,7 +76,7 @@ function DetailRoomInfo({ room, index }) {
 
         {/* Price */}
         <p className="mt-5 text-lg font-semibold text-gray-900">
-          ${room.pricePerNight}{" "}
+          ${Number(room.pricePerNight).toFixed(2)}{" "}
           <span className="text-sm font-normal text-gray-600">/night</span>
         </p>
       </div>

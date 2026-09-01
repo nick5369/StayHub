@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { FaMapMarkerAlt, FaConciergeBell, FaMountain, FaSwimmer, FaWifi, FaCoffee } from "react-icons/fa";
-import { hotelDummyData, roomsDummyData, userDummyData } from "../assets/assets";
+
 import { useAppContext } from "../context/appContext.jsx";
 import toast from "react-hot-toast";
 
@@ -87,22 +87,18 @@ const RoomDetails = () => {
             {/* Hotel Info */}
             <div className="mb-6">
                 <h1 className="text-3xl font-bold">
-                    {hotelDummyData.name}{" "}
+                    {room.hotel.name}{" "}
                     <span className="text-lg font-normal">({room.roomType})</span>
                 </h1>
 
                 {/* Reviews + Location */}
                 <div className="flex items-center gap-4 mt-2 text-gray-600">
-                    {/* Stars + Reviews */}
-                    <div className="flex items-center gap-2">
-                        <p className="text-orange-500 text-lg">★★★★☆</p>
-                        <span>200+ reviews</span>
-                    </div>
+                    {/* TODO(Task 8): render real rating/review data here */}
 
                     {/* Address */}
                     <div className="flex items-center gap-1">
                         <FaMapMarkerAlt className="text-orange-500" />
-                        <p>{hotelDummyData.address}</p>
+                        <p>{room.hotel.address}</p>
                     </div>
                 </div>
             </div>
@@ -138,7 +134,7 @@ const RoomDetails = () => {
 
 
             {/* Price */}
-            <div className="mt-4 text-2xl font-bold">${room.pricePerNight}/night</div>
+            <div className="mt-4 text-2xl font-bold">${Number(room.pricePerNight).toFixed(2)}/night</div>
 
             {/* Amenities */}
             <h2 className="text-xl font-semibold mt-6">Experience Luxury Like Never Before</h2>
@@ -218,13 +214,13 @@ const RoomDetails = () => {
             <div className="mt-8 flex items-center justify-between p-4 border rounded-xl">
                 <div className="flex items-center gap-4">
                     <img
-                        src={userDummyData.image}
-                        alt={userDummyData.username}
+                        src={room.hotel.owner.image}
+                        alt={room.hotel.owner.username}
                         className="w-16 h-16 rounded-full"
                     />
                     <div>
-                        <h3 className="font-semibold">Hosted by {hotelDummyData.name}</h3>
-                        <p className="text-orange-500">★★★★☆ 200+ reviews</p>
+                        <h3 className="font-semibold">Hosted by {room.hotel.owner.username}</h3>
+                        {/* TODO(Task 8): render real rating/review data here */}
                     </div>
                 </div>
                 <button className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
