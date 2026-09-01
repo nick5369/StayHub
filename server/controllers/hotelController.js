@@ -34,7 +34,9 @@ export const registerHotel = async (req, res) => {
         res.json({ success: true, message: "Hotel Registered Successfully" });
 
     } catch (error) {
-        console.error("Error registering hotel:", error);
+        if (error.code === 'P2002' && error.meta?.target?.includes('ownerId')) {
+            return res.status(400).json({ success: false, message: "Hotel Already Registered" });
+        }
         res.status(500).json({ success: false, message: error.message || "Internal Server Error" });
     }
 }

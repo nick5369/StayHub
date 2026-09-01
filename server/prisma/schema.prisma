@@ -66,6 +66,9 @@ model Hotel {
   owner   User   @relation(fields: [ownerId], references: [id])
   ownerId String
 
+  @@unique([ownerId])
+  @@index([city])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -78,7 +81,7 @@ model Room {
   hotel         Hotel   @relation(fields: [hotelId], references: [id])
   hotelId       String
   roomType      String
-  pricePerNight Float
+  pricePerNight Decimal @db.Decimal(10, 2)
 
   // Both amenities and images are simple [String] arrays in Mongoose.
   // Postgres native text[] is a clean 1-to-1 mapping — no child table needed
@@ -92,6 +95,9 @@ model Room {
   updatedAt DateTime @updatedAt
 
   bookings Booking[]
+
+  @@index([hotelId])
+  @@index([isAvailable])
 }
 
 model Booking {
@@ -109,7 +115,7 @@ model Booking {
   checkInDate  DateTime
   checkOutDate DateTime
 
-  totalPrice Float
+  totalPrice Decimal @db.Decimal(10, 2)
   guests     Int
 
   status BookingStatus @default(pending)
@@ -129,6 +135,7 @@ model Booking {
   //   existingCheckIn  <= newCheckOut   AND
   //   existingCheckOut >= newCheckIn
   //
+  // ---------------------------------------------------------------------------
   // DB-level guarantee (optional, add after initial migration):
   //   1. Enable btree_gist extension:  CREATE EXTENSION IF NOT EXISTS btree_gist;
   //   2. Add EXCLUDE constraint:
@@ -139,4 +146,9 @@ model Booking {
   //          tsrange("checkInDate", "checkOutDate", '[)') WITH &&
   //        );
   // ---------------------------------------------------------------------------
+
+  @@index([roomId, checkInDate, checkOutDate])
+  @@index([userId])
+  @@index([hotelId])
+  @@index([status])
 }

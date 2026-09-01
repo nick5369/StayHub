@@ -19,7 +19,7 @@ export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => 
             where: {
                 roomId: room,
                 AND: [
-                    { checkInDate:  { lte: new Date(checkOutDate) } },
+                    { checkInDate: { lte: new Date(checkOutDate) } },
                     { checkOutDate: { gte: new Date(checkInDate) } },
                 ],
             },
@@ -74,7 +74,7 @@ export const createBooking = async (req, res) => {
 
         const timeDiff = Math.abs(new Date(checkOutDate).getTime() - new Date(checkInDate).getTime());
         const numberOfNights = Math.ceil(timeDiff / (1000 * 3600 * 24));
-        const totalPrice = roomData.pricePerNight * numberOfNights;
+        const totalPrice = roomData.pricePerNight.toNumber() * numberOfNights;
 
         const booking = await prisma.booking.create({
             data: {
@@ -165,7 +165,7 @@ export const getHotelBookings = async (req, res) => {
         });
 
         const totalBookings = bookings.length;
-        const totalRevenue = bookings.reduce((total, booking) => total + booking.totalPrice, 0);
+        const totalRevenue = bookings.reduce((total, booking) => total + booking.totalPrice.toNumber(), 0);
 
         return res.json({ success: true, dashboardData: { bookings, totalBookings, totalRevenue } });
 
@@ -196,7 +196,7 @@ export const stripePayment = async (req, res) => {
             include: { hotel: true },
         });
 
-        const totalPrice = booking.totalPrice;
+        const totalPrice = booking.totalPrice.toNumber();
         const { origin } = req.headers;
 
         const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY);
@@ -208,7 +208,7 @@ export const stripePayment = async (req, res) => {
                     product_data: {
                         name: roomData.hotel.name,
                     },
-                    unit_amount: totalPrice * 100,
+                    unit_amount: Math.round(Number(totalPrice) * 100),
                 },
                 quantity: 1,
             }
