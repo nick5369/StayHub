@@ -6,10 +6,41 @@
 // NOTE: bookingId in session.metadata is now a UUID string (set in stripePayment).
 // Any Stripe sessions created pre-migration (with Mongo ObjectId booking IDs)
 // will fail the Prisma findUnique lookup — this is an expected cutover artifact.
+//
+// Handled events:
+//   - checkout.session.completed  → preferred; metadata.bookingId is directly available
+//   - payment_intent.succeeded    → fallback; we retrieve the checkout session to get metadata
 
 import stripe from 'stripe';
 import prisma from '../configs/db.js';
 
+// ── Shared helper ─────────────────────────────────────────────────────────────
+async function confirmBookingPaid(bookingId) {
+    const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+
+    if (!booking) {
+        console.error(`[stripeWebhooks] Booking ${bookingId} not found — skipping.`);
+        return;
+    }
+
+    if (booking.isPaid && booking.status === 'confirmed') {
+        console.log(`[stripeWebhooks] Duplicate delivery for booking ${bookingId} — already paid & confirmed, skipping update.`);
+        return;
+    }
+
+    await prisma.booking.update({
+        where: { id: bookingId },
+        data: {
+            isPaid: true,
+            paymentMethod: 'Stripe',
+            status: 'confirmed',
+        },
+    });
+
+    console.log(`[stripeWebhooks] Booking ${bookingId} marked as paid and confirmed.`);
+}
+
+// ── Webhook handler ───────────────────────────────────────────────────────────
 export const stripeWebhooks = async (request, response) => {
     const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY);
     const sig = request.headers['stripe-signature'];
@@ -29,43 +60,43 @@ export const stripeWebhooks = async (request, response) => {
     console.log('Webhook event received:', event.type);
 
     if (event.type === 'checkout.session.completed') {
+        // ── Preferred path: metadata is directly on the session ──────────────
         const session = event.data.object;
         const { bookingId } = session.metadata;
+        console.log('Processing checkout.session.completed for booking:', bookingId);
+        await confirmBookingPaid(bookingId);
 
-        console.log('Processing payment for booking:', bookingId);
+    } else if (event.type === 'payment_intent.succeeded') {
+        // ── Fallback path ─────────────────────────────────────────────────────
+        // Stripe sends this when the payment_intent inside a checkout session
+        // succeeds. The bookingId is NOT on the payment_intent directly — we
+        // must retrieve the linked checkout session to access metadata.
+        const paymentIntent = event.data.object;
 
-        // ── Idempotency check ────────────────────────────────────────────────
-        // Stripe can redeliver the same event. If the booking is already marked
-        // paid and confirmed, skip the update to avoid re-triggering any side
-        // effects (e.g. confirmation emails added in the future).
-        const booking = await prisma.booking.findUnique({
-            where: { id: bookingId },
+        const sessions = await stripeInstance.checkout.sessions.list({
+            payment_intent: paymentIntent.id,
+            limit: 1,
         });
 
-        if (!booking) {
-            console.error(`[stripeWebhooks] Booking ${bookingId} not found — skipping.`);
+        const session = sessions.data[0];
+
+        if (!session) {
+            console.error(`[stripeWebhooks] No checkout session found for payment_intent ${paymentIntent.id}`);
             return response.json({ received: true });
         }
 
-        if (booking.isPaid && booking.status === 'confirmed') {
-            console.log(`[stripeWebhooks] Duplicate delivery for booking ${bookingId} — already paid & confirmed, skipping update.`);
+        const { bookingId } = session.metadata || {};
+
+        if (!bookingId) {
+            console.error(`[stripeWebhooks] No bookingId in session metadata for payment_intent ${paymentIntent.id}`);
             return response.json({ received: true });
         }
 
-        // ── Apply payment + confirmation ─────────────────────────────────────
-        await prisma.booking.update({
-            where: { id: bookingId },
-            data: {
-                isPaid: true,
-                paymentMethod: 'Stripe',
-                status: 'confirmed',   // set alongside isPaid so state is consistent
-            },
-        });
-
-        console.log('Booking marked as paid and confirmed:', bookingId);
+        console.log('Processing payment_intent.succeeded for booking:', bookingId);
+        await confirmBookingPaid(bookingId);
 
     } else {
-        console.log(`Unhandled event type ${event.type}`);
+        console.log(`[stripeWebhooks] Unhandled event type: ${event.type}`);
     }
 
     response.json({ received: true });
