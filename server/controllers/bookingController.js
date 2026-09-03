@@ -155,6 +155,7 @@ export const createBooking = async (req, res) => {
                     checkInDate: new Date(checkInDate),
                     checkOutDate: new Date(checkOutDate),
                     totalPrice,
+                    status: "pending",  // explicit — schema default, but stated for clarity
                 },
             });
 
@@ -341,3 +342,107 @@ export const stripePayment = async (req, res) => {
         res.json({ success: false, message: "payment failed" });
     }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/bookings/:bookingId/confirm
+//
+// Allows a hotel owner to confirm a "Pay At Hotel" booking.
+// Only the owner of the hotel the booking belongs to may call this.
+// Idempotent: calling on an already-confirmed booking returns 200.
+// ---------------------------------------------------------------------------
+export const confirmBooking = async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        const requesterId = req.user.id;
+
+        // ── 1. Load booking ──────────────────────────────────────────────────
+        const booking = await prisma.booking.findUnique({
+            where: { id: bookingId },
+            include: { hotel: true },
+        });
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // ── 2. Authorise: requester must be the hotel owner ──────────────────
+        if (booking.hotel.ownerId !== requesterId) {
+            return res.status(403).json({ success: false, message: "Not authorised to confirm this booking" });
+        }
+
+        // ── 3. Idempotency guard ─────────────────────────────────────────────
+        if (booking.status === "confirmed") {
+            console.log(`[confirmBooking] Booking ${bookingId} already confirmed — no-op.`);
+            return res.json({ success: true, message: "Booking is already confirmed" });
+        }
+
+        if (booking.status === "cancelled") {
+            return res.status(400).json({ success: false, message: "Cannot confirm a cancelled booking" });
+        }
+
+        // ── 4. Confirm ───────────────────────────────────────────────────────
+        await prisma.booking.update({
+            where: { id: bookingId },
+            data: { status: "confirmed" },
+        });
+
+        console.log(`[confirmBooking] Booking ${bookingId} confirmed by owner ${requesterId}.`);
+        return res.json({ success: true, message: "Booking confirmed" });
+
+    } catch (error) {
+        console.error("[confirmBooking] Unexpected error:", error);
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// ---------------------------------------------------------------------------
+// POST /api/bookings/:bookingId/cancel
+//
+// Allows either the booking's own user OR the hotel owner to cancel a booking.
+// Idempotent: calling on an already-cancelled booking returns 200.
+// Cancelling frees the date range for other bookings because the DB exclusion
+// constraint (booking_no_overlap) explicitly excludes cancelled bookings.
+// ---------------------------------------------------------------------------
+export const cancelBooking = async (req, res) => {
+    try {
+        const { bookingId } = req.params;
+        const requesterId = req.user.id;
+
+        // ── 1. Load booking ──────────────────────────────────────────────────
+        const booking = await prisma.booking.findUnique({
+            where: { id: bookingId },
+            include: { hotel: true },
+        });
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // ── 2. Authorise: requester must be the guest OR the hotel owner ─────
+        const isGuest = booking.userId === requesterId;
+        const isOwner = booking.hotel.ownerId === requesterId;
+
+        if (!isGuest && !isOwner) {
+            return res.status(403).json({ success: false, message: "Not authorised to cancel this booking" });
+        }
+
+        // ── 3. Idempotency guard ─────────────────────────────────────────────
+        if (booking.status === "cancelled") {
+            console.log(`[cancelBooking] Booking ${bookingId} already cancelled — no-op.`);
+            return res.json({ success: true, message: "Booking is already cancelled" });
+        }
+
+        // ── 4. Cancel ────────────────────────────────────────────────────────
+        await prisma.booking.update({
+            where: { id: bookingId },
+            data: { status: "cancelled" },
+        });
+
+        console.log(`[cancelBooking] Booking ${bookingId} cancelled by user ${requesterId}.`);
+        return res.json({ success: true, message: "Booking cancelled" });
+
+    } catch (error) {
+        console.error("[cancelBooking] Unexpected error:", error);
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+};
