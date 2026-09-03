@@ -136,6 +136,7 @@ model Booking {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  expiresAt DateTime?
 
   // ---------------------------------------------------------------------------
   // Overlapping booking prevention:
@@ -150,11 +151,11 @@ model Booking {
   //   1. Enable btree_gist extension:  CREATE EXTENSION IF NOT EXISTS btree_gist;
   //   2. Add EXCLUDE constraint:
   //      ALTER TABLE "Booking"
-  //        ADD CONSTRAINT no_overlapping_bookings
+  //        ADD CONSTRAINT booking_no_overlap
   //        EXCLUDE USING gist (
   //          "roomId" WITH =,
   //          tsrange("checkInDate", "checkOutDate", '[)') WITH &&
-  //        );
+  //        ) WHERE (status NOT IN ('cancelled', 'refunded'));
   // ---------------------------------------------------------------------------
 
   @@index([roomId, checkInDate, checkOutDate])

@@ -15,12 +15,23 @@ import stripe from "stripe";
 // ---------------------------------------------------------------------------
 export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => {
     try {
+        const inDate = new Date(checkInDate);
+        inDate.setUTCHours(11, 0, 0, 0);
+
+        const outDate = new Date(checkOutDate);
+        outDate.setUTCHours(10, 0, 0, 0);
+
         const overlappingBookings = await prisma.booking.findMany({
             where: {
                 roomId: room,
+                status: { notIn: ['cancelled', 'refunded'] },
+                OR: [
+                    { expiresAt: null },
+                    { expiresAt: { gt: new Date() } },
+                ],
                 AND: [
-                    { checkInDate: { lte: new Date(checkOutDate) } },
-                    { checkOutDate: { gte: new Date(checkInDate) } },
+                    { checkInDate: { lt: outDate } },
+                    { checkOutDate: { gt: inDate } },
                 ],
             },
         });
@@ -106,7 +117,14 @@ export const createBooking = async (req, res) => {
     if (!checkInDate || !checkOutDate) {
         return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
     }
-    if (new Date(checkInDate) >= new Date(checkOutDate)) {
+
+    const inDate = new Date(checkInDate);
+    inDate.setUTCHours(11, 0, 0, 0);
+
+    const outDate = new Date(checkOutDate);
+    outDate.setUTCHours(10, 0, 0, 0);
+
+    if (inDate >= outDate) {
         return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
     }
 
@@ -126,15 +144,30 @@ export const createBooking = async (req, res) => {
             // here until we commit/rollback.  Different rooms are unaffected.
             await tx.$queryRaw`SELECT id FROM "Room" WHERE id = ${roomId} FOR UPDATE`;
 
+            // ── CANCEL EXPIRED BOOKINGS (Lazy Evaluation) ────────────────────
+            await tx.booking.updateMany({
+                where: {
+                    roomId,
+                    status: 'payment_pending',
+                    expiresAt: { lte: new Date() }
+                },
+                data: { status: 'cancelled' }
+            });
+
             // ── B. Overlap check (re-run inside the lock) ────────────────────
             // Must use `tx`, not the top-level `prisma`, so the query runs
             // within the locked transaction scope and sees the latest state.
             const overlapping = await tx.booking.findMany({
                 where: {
                     roomId,
+                    status: { notIn: ['cancelled', 'refunded'] },
+                    OR: [
+                        { expiresAt: null },
+                        { expiresAt: { gt: new Date() } },
+                    ],
                     AND: [
-                        { checkInDate: { lte: new Date(checkOutDate) } },
-                        { checkOutDate: { gte: new Date(checkInDate) } },
+                        { checkInDate: { lt: outDate } },
+                        { checkOutDate: { gt: inDate } },
                     ],
                 },
             });
@@ -155,9 +188,9 @@ export const createBooking = async (req, res) => {
 
             // ── D. Compute price (Decimal-safe) ──────────────────────────────
             const timeDiff = Math.abs(
-                new Date(checkOutDate).getTime() - new Date(checkInDate).getTime()
+                new Date(checkOutDate).setUTCHours(0, 0, 0, 0) - new Date(checkInDate).setUTCHours(0, 0, 0, 0)
             );
-            const numberOfNights = Math.ceil(timeDiff / (1000 * 3600 * 24));
+            const numberOfNights = Math.round(timeDiff / (1000 * 3600 * 24));
             const totalPrice = txRoomData.pricePerNight.toNumber() * numberOfNights;
 
             // ── E. Create Booking row ────────────────────────────────────────
@@ -167,11 +200,12 @@ export const createBooking = async (req, res) => {
                     roomId,
                     hotelId: txRoomData.hotel.id,
                     guests,
-                    checkInDate: new Date(checkInDate),
-                    checkOutDate: new Date(checkOutDate),
+                    checkInDate: inDate,
+                    checkOutDate: outDate,
                     totalPrice,
-                    status: "pending",  // explicit — schema default, but stated for clarity
-                    paymentMethod: "PAY_AT_HOTEL",
+                    status: "payment_pending",
+                    paymentMethod: "STRIPE",
+                    expiresAt: new Date(Date.now() + 15 * 60000),
                 },
             });
 
@@ -356,6 +390,7 @@ export const stripePayment = async (req, res) => {
             data: {
                 stripeSessionId: session.id,
                 status: "payment_pending",
+                expiresAt: new Date(Date.now() + 15 * 60000),
             },
         });
 
