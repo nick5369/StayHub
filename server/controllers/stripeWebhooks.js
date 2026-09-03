@@ -15,7 +15,7 @@ import stripe from 'stripe';
 import prisma from '../configs/db.js';
 
 // ── Shared helper ─────────────────────────────────────────────────────────────
-async function confirmBookingPaid(bookingId) {
+async function confirmBookingPaid(bookingId, paymentIntentId) {
     const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
 
     if (!booking) {
@@ -32,8 +32,9 @@ async function confirmBookingPaid(bookingId) {
         where: { id: bookingId },
         data: {
             isPaid: true,
-            paymentMethod: 'Stripe',
+            paymentMethod: 'STRIPE',
             status: 'confirmed',
+            stripePaymentIntent: paymentIntentId,
         },
     });
 
@@ -63,8 +64,9 @@ export const stripeWebhooks = async (request, response) => {
         // ── Preferred path: metadata is directly on the session ──────────────
         const session = event.data.object;
         const { bookingId } = session.metadata;
+        const paymentIntentId = session.payment_intent;
         console.log('Processing checkout.session.completed for booking:', bookingId);
-        await confirmBookingPaid(bookingId);
+        await confirmBookingPaid(bookingId, paymentIntentId);
 
     } else if (event.type === 'payment_intent.succeeded') {
         // ── Fallback path ─────────────────────────────────────────────────────
@@ -93,7 +95,7 @@ export const stripeWebhooks = async (request, response) => {
         }
 
         console.log('Processing payment_intent.succeeded for booking:', bookingId);
-        await confirmBookingPaid(bookingId);
+        await confirmBookingPaid(bookingId, paymentIntent.id);
 
     } else {
         console.log(`[stripeWebhooks] Unhandled event type: ${event.type}`);

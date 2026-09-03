@@ -19,10 +19,17 @@ enum UserRole {
   hotelOwner
 }
 
+enum PaymentMethod {
+  PAY_AT_HOTEL
+  STRIPE
+}
+
 enum BookingStatus {
   pending
+  payment_pending
   confirmed
   cancelled
+  refunded
 }
 
 // ---------------------------------------------------------------------------
@@ -121,8 +128,11 @@ model Booking {
   status BookingStatus @default(pending)
 
   // Default matches the original Mongoose schema default.
-  paymentMethod String  @default("Pay At Hotel")
-  isPaid        Boolean @default(false)
+  paymentMethod PaymentMethod @default(PAY_AT_HOTEL)
+  isPaid        Boolean       @default(false)
+
+  stripeSessionId     String?
+  stripePaymentIntent String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

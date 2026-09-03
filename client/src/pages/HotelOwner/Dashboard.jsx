@@ -6,8 +6,15 @@ import { useAppContext } from '../../context/appContext.jsx';
 // ── Status badge config ───────────────────────────────────────────────────────
 const STATUS_CONFIG = {
     pending:   { label: 'Pending',   classes: 'bg-amber-100 text-amber-700' },
+    payment_pending: { label: 'Payment Pending', classes: 'bg-blue-100 text-blue-700' },
     confirmed: { label: 'Confirmed', classes: 'bg-green-100 text-green-700' },
     cancelled: { label: 'Cancelled', classes: 'bg-gray-100  text-gray-500'  },
+    refunded:  { label: 'Refunded',  classes: 'bg-purple-100 text-purple-700' },
+};
+
+const PAYMENT_LABELS = {
+    'PAY_AT_HOTEL': 'Pay At Hotel',
+    'STRIPE': 'Stripe'
 };
 
 const Dashboard = () => {
@@ -148,7 +155,7 @@ const Dashboard = () => {
                                 const statusCfg = STATUS_CONFIG[booking.status] ?? STATUS_CONFIG.pending;
                                 // Show action buttons only for pending Pay-At-Hotel bookings
                                 const showActions =
-                                    booking.paymentMethod === 'Pay At Hotel' &&
+                                    booking.paymentMethod === 'PAY_AT_HOTEL' &&
                                     booking.status === 'pending';
                                 const isLoading = loadingId === booking.id;
 
@@ -173,7 +180,7 @@ const Dashboard = () => {
                                                     : 'bg-yellow-100 text-yellow-700'
                                                     }`}
                                             >
-                                                {booking.isPaid ? 'Paid' : booking.paymentMethod}
+                                                {booking.isPaid ? 'Paid' : (PAYMENT_LABELS[booking.paymentMethod] || booking.paymentMethod)}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center align-middle text-base">

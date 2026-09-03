@@ -7,8 +7,10 @@ import toast from 'react-hot-toast';
 // ── Status badge config ───────────────────────────────────────────────────────
 const STATUS_CONFIG = {
   pending:   { label: 'Pending',   classes: 'bg-amber-100 text-amber-700' },
+  payment_pending: { label: 'Payment Pending', classes: 'bg-blue-100 text-blue-700' },
   confirmed: { label: 'Confirmed', classes: 'bg-green-100 text-green-700' },
   cancelled: { label: 'Cancelled', classes: 'bg-gray-100  text-gray-500'  },
+  refunded:  { label: 'Refunded',  classes: 'bg-purple-100 text-purple-700' },
 };
 
 const BookIcon = () => (

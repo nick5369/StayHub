@@ -37,6 +37,14 @@ export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => 
 export const checkAvailabilityApi = async (req, res) => {
     try {
         const { checkInDate, checkOutDate, room } = req.body;
+
+        if (!checkInDate || !checkOutDate) {
+            return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
+        }
+        if (new Date(checkInDate) >= new Date(checkOutDate)) {
+            return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
+        }
+
         const isAvailable = await checkAvailability({ checkInDate, checkOutDate, room });
         return res.json({ success: true, isAvailable });
     } catch (error) {
@@ -94,6 +102,13 @@ class RoomUnavailableError extends Error {
 //   - Response shape unchanged: { success, message }
 export const createBooking = async (req, res) => {
     const { room: roomId, checkInDate, checkOutDate, guests } = req.body;
+
+    if (!checkInDate || !checkOutDate) {
+        return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
+    }
+    if (new Date(checkInDate) >= new Date(checkOutDate)) {
+        return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
+    }
 
     // req.user.id is the internal UUID set by the JWT auth middleware.
     const userId = req.user.id;
@@ -156,6 +171,7 @@ export const createBooking = async (req, res) => {
                     checkOutDate: new Date(checkOutDate),
                     totalPrice,
                     status: "pending",  // explicit — schema default, but stated for clarity
+                    paymentMethod: "PAY_AT_HOTEL",
                 },
             });
 
@@ -333,6 +349,14 @@ export const stripePayment = async (req, res) => {
             metadata: {
                 bookingId,  // UUID string — Stripe webhook will use this to look up the row
             }
+        });
+
+        await prisma.booking.update({
+            where: { id: bookingId },
+            data: {
+                stripeSessionId: session.id,
+                status: "payment_pending",
+            },
         });
 
         res.json({ success: true, url: session.url });

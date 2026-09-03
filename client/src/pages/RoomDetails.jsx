@@ -51,7 +51,7 @@ const RoomDetails = () => {
             }
             else{
                 const {data} = await axios.post('/api/bookings/book',
-                    {room:id, checkInDate, checkOutDate, guests,paymentMethod : 'Pay at Hotel'}
+                    {room:id, checkInDate, checkOutDate, guests,paymentMethod : 'PAY_AT_HOTEL'}
                 )
                 if(data.success){
                     toast.success(data.message)
