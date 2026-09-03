@@ -402,6 +402,8 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
 | GET | /api/bookings/user | getUserBookings | Yes (protect) |
 | GET | /api/bookings/hotel | getHotelBookings | Yes (protect) |
 | POST | /api/bookings/stripe-payment | stripePayment | Yes (protect) |
+| POST | /api/bookings/:bookingId/confirm | confirmBooking | Yes (protect) |
+| POST | /api/bookings/:bookingId/cancel | cancelBooking | Yes (protect) |
 
 ### Stripe Webhook (/api/stripe)
 
@@ -567,12 +569,13 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
 **Body:** { room (roomId), checkInDate, checkOutDate, guests }
 
 **Business Logic:**
-1. Calls checkAvailability; if not available -> 400.
-2. Loads room + hotel via prisma.room.findUnique with include hotel.
-3. Calculates numberOfNights = ceil(|checkOut - checkIn| / 86400000).
-4. Calculates totalPrice = pricePerNight x numberOfNights.
-5. Creates Booking record.
-6. Sends booking confirmation email to req.user.email with booking details (ID, hotel name, address, date, amount).
+1. Loads room + hotel via prisma.room.findUnique with include hotel.
+2. Calculates numberOfNights = ceil(|checkOut - checkIn| / 86400000).
+3. Calculates totalPrice = pricePerNight x numberOfNights.
+4. Uses an interactive transaction (`prisma.$transaction`) with a row-level lock on the room (`SELECT ... FOR UPDATE`) to prevent concurrent double-booking.
+5. Within the transaction, validates availability against overlapping bookings; if not available -> 400.
+6. Creates the Booking record.
+7. Sends booking confirmation email to req.user.email with booking details (ID, hotel name, address, date, amount).
 
 #### getUserBookings — GET /api/bookings/user
 
@@ -601,6 +604,24 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
    - metadata.bookingId: UUID (used by webhook to update DB).
 4. Returns { success: true, url: session.url }.
 
+#### confirmBooking — POST /api/bookings/:bookingId/confirm
+
+**Business Logic:**
+1. Loads the booking and verifies it exists.
+2. Authorises the request (only the hotel owner can confirm).
+3. Idempotency guard: skips if already confirmed, errors if cancelled.
+4. Updates booking status to "confirmed".
+5. Returns { success: true, message: "Booking confirmed" }.
+
+#### cancelBooking — POST /api/bookings/:bookingId/cancel
+
+**Business Logic:**
+1. Loads the booking and verifies it exists.
+2. Authorises the request (either the guest who booked or the hotel owner).
+3. Idempotency guard: skips if already cancelled.
+4. Updates booking status to "cancelled".
+5. Returns { success: true, message: "Booking cancelled" }.
+
 ---
 
 ### stripeWebhooks.js
@@ -611,7 +632,8 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
 1. Verifies Stripe webhook signature using STRIPE_WEBHOOK_SECRET.
 2. Handles checkout.session.completed event:
    - Extracts bookingId from session.metadata.
-   - Updates Booking record: isPaid: true, paymentMethod: "Stripe".
+   - Performs idempotency check (skips if already paid & confirmed).
+   - Updates Booking record: isPaid: true, paymentMethod: "Stripe", status: "confirmed".
 3. All other event types are logged and ignored.
 
 ---
@@ -707,7 +729,7 @@ Loader waits 8 seconds then navigates to /my-bookings
         |
 (Stripe sends webhook to server)
 POST /api/stripe (raw body)
-Server verifies signature -> updates Booking: isPaid=true, paymentMethod="Stripe"
+Server verifies signature -> updates Booking: isPaid=true, paymentMethod="Stripe", status="confirmed"
 ```
 
 ---
@@ -1196,18 +1218,55 @@ All API responses are dynamically computed from the database. Key dynamic fields
 
 | # | Location | Issue |
 |---|---|---|
-| 1 | RoomDetails.jsx (line 90, 105, 221-232) | Hotel name header, star rating, and host section use hotelDummyData / userDummyData instead of real API data |
-| 2 | RoomDetails.jsx (line 71) | Uses room._id for lookup but Prisma returns room.id (UUID) — may fail to find room |
-| 3 | MyBookings.jsx (line 46-47) | handlePayment function is declared but empty (dead code) |
-| 4 | MyBookings.jsx (line 82, 105, 130) | Uses booking._id but Prisma returns booking.id — all Mongo ObjectId references should be .id |
-| 5 | ListRoom.jsx (line 105) | Uses room._id for toggle — Prisma returns room.id |
-| 6 | HotelCard.jsx (line 29) | Renders room.hotel.rating which doesn't exist in the DB schema |
-| 7 | Hero.jsx | Check-in, check-out, guests inputs in hero search form are not wired to booking logic |
-| 8 | Footer.jsx | Copyright year hardcoded as 2025; social links are href="#" |
-| 9 | AllRooms.jsx (line 87) | Uses room._id as key instead of room.id |
-| 10 | server/.env.example | Still contains old Clerk keys (CLERK_*) — legacy from pre-migration |
-| 11 | server/scripts/ | Scripts directory exists but content not explored in this documentation |
-| 12 | Booking status | BookingStatus enum (pending, confirmed, cancelled) exists but booking status is never updated beyond pending in current code |
-| 13 | Admin role | UserRole.admin exists in schema but no admin routes or UI exist |
-| 14 | Loader.jsx | 8-second wait is arbitrary; Stripe webhook processing time is not guaranteed |
-| 15 | openFilters state | Declared in AllRooms.jsx but never used in the JSX render |
+| 1 | server/scripts/ | Scripts directory exists but content not explored in this documentation |
+| 2 | Admin role | UserRole.admin exists in schema but no admin routes or UI exist |
+
+---
+
+## 20. Future Improvements & Architectural Roadmap
+
+### 1. Implement an Inventory Architecture (Room vs. RoomType)
+*   **Current Flaw:** A `Room` currently acts as both the product sold and the physical room, causing data duplication if a hotel has multiple identical rooms and an inability to track the specific room assigned to a guest.
+*   **The Fix:** Split the model into two.
+    *   `RoomType` model: Stores marketing data (name, description, pricePerNight, maxGuests, amenities, images).
+    *   `Room` model: Represents physical inventory (roomNumber, roomTypeId, hotelId, isUnderMaintenance).
+*   **Extended Detail:** This enables better revenue management (e.g., dynamic pricing on RoomType), simplifies updates to room descriptions across the entire hotel, and allows receptionists to manage physical assignments and maintenance statuses for specific doors without affecting the booking availability of the general `RoomType`.
+
+### 2. Remove the 1:1 Hotel Ownership Limit
+*   **Current Flaw:** The `@@unique([ownerId])` constraint on the Hotel model restricts owners to a single property.
+*   **The Fix:** Remove the unique constraint to establish a 1-to-Many relationship.
+*   **Extended Detail:** This requires UI updates to the Owner Dashboard to allow selecting which hotel to view, aggregating revenue across all properties, or managing settings per property. It would significantly increase the platform's viability for hotel chains and property management companies.
+
+### 3. Prevent the "Ghost Booking" Trap
+*   **Current Flaw:** Initiating a Stripe checkout creates a pending booking that permanently blocks the calendar, even if the user never pays.
+*   **The Fix:** Introduce an `expiresAt` DateTime field on pending bookings (e.g., now() + 15 mins). A cron job or lazy evaluation script should automatically cancel unpaid, expired bookings.
+*   **Extended Detail:** To ensure robust availability logic, modify the `checkAvailability` query to ignore pending bookings where `expiresAt` has passed. This avoids the necessity of a rigid background worker (like Redis/Bull) by enforcing the expiration logic directly in the availability validation step.
+
+### 4. Ensure Financial Traceability for Refunds
+*   **Current Flaw:** Without specific Stripe identifiers saved on the booking, the system cannot programmatically process refunds or resolve disputes automatically.
+*   **The Fix:** Add `stripeSessionId String? @unique` and `stripePaymentIntent String? @unique` to the Booking model.
+*   **Extended Detail:** Upon cancellation, the backend can retrieve the `stripePaymentIntent` and invoke `stripe.refunds.create()`. This also assists in reconciliation reports for the hotel owner, tying exact DB records to Stripe ledger entries.
+
+### 5. Enforce Strict Payment Types
+*   **Current Flaw:** `paymentMethod` is an unconstrained String. Typographical errors can break webhook processing and frontend display logic.
+*   **The Fix:** Define a Prisma enum: `enum PaymentMethod { PAY_AT_HOTEL, STRIPE }`.
+*   **Extended Detail:** Utilizing enums ensures compile-time safety and prevents rogue data from being inserted. It simplifies downstream analytics and UI conditional rendering by strictly guaranteeing one of the allowed payment flows.
+
+### 6. Expand the Booking State Machine
+*   **Current Flaw:** The `pending`, `confirmed`, and `cancelled` statuses lack the nuance required for a real hotel checkout flow.
+*   **The Fix:** Enhance `BookingStatus` to include `payment_pending`, `pending_approval`, `checked_in`, `checked_out`, and `refunded`.
+*   **Extended Detail:** 
+    *   `payment_pending`: Ensures dates are held temporarily while at Stripe checkout.
+    *   `pending_approval`: Useful if the owner needs to manually review "Pay At Hotel" requests.
+    *   `checked_in`/`checked_out`: Allows the dashboard to function as a true Property Management System (PMS) by tracking guests physically present.
+    *   `refunded`: Distinct from cancelled, clarifying the financial state.
+
+### 7. Optimize Database Race Condition Shields
+*   **Current Flaw:** Application-level `SELECT ... FOR UPDATE` locks are often too coarse, slowing down concurrent bookings for completely different date ranges.
+*   **The Fix:** Rely primarily on the PostgreSQL `btree_gist` exclusion constraint but enhance it with a `WHERE` clause (e.g., `WHERE status IN ('payment_pending', 'pending_approval', 'confirmed', 'checked_in')`).
+*   **Extended Detail:** This partial index constraint ensures that cancelled or expired holds do not trigger overlap errors. It moves the complex concurrency checks directly into the database engine, offering significantly better throughput than row-level application locking while maintaining absolute safety.
+
+### 8. Add Essential Guest Auditing
+*   **Current Flaw:** The system lacks vital guest contact information, making it legally non-compliant for hotel check-ins.
+*   **The Fix:** Add `firstName`, `lastName`, and `phone` to the `User` model, and `maxGuests` to the `RoomType` model.
+*   **Extended Detail:** This enables comprehensive booking manifests. The frontend check-out process should mandate these details, and the backend should validate guest counts against the `RoomType.maxGuests` threshold before allowing a reservation.
