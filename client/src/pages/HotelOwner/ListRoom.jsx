@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { roomsDummyData } from "../../assets/assets";
 import Title from "../../components/Title";
 import { useAppContext } from "../../context/appContext";
 import toast from "react-hot-toast";
@@ -12,7 +11,6 @@ const ListRoom = () => {
     try {
       const {data} = await axios.get('/api/rooms/owner')
       if(data.success){
-        console.log("Fetched rooms:", data.rooms); // Debug: see data structure
         setOwnerRooms(data.rooms);
       }
       else{
@@ -41,7 +39,6 @@ const ListRoom = () => {
   }
 
   const handleToggle = async (roomId) => {
-
     try {
       const {data} = await axios.post('/api/rooms/toggle-availability',{roomId})
       if(data.success){
@@ -53,12 +50,6 @@ const ListRoom = () => {
     } catch (error) {
       toast.error(error.response?.data?.message || error.message || "Could not toggle room availability");
     }
-
-    // setRooms((prev) =>
-    //   prev.map((room) =>
-    //     room.id === id ? { ...room, isAvailable: !room.isAvailable } : room
-    //   )
-    // );
   };
 
   useEffect(()=>{
@@ -80,10 +71,11 @@ const ListRoom = () => {
         <table className="w-full table-fixed border-collapse bg-white rounded-lg shadow">
           <thead>
             <tr className="bg-gray-100 text-sm font-semibold text-gray-700">
-              <th className="p-3 text-center w-1/4">Name</th>
-              <th className="p-3 text-center w-1/3">Facility</th>
-              <th className="p-3 text-center w-1/4">Price / night</th>
-              {/* removed w-24 so column width auto fits */}
+              <th className="p-3 text-center">Name</th>
+              <th className="p-3 text-center">Facility</th>
+              <th className="p-3 text-center">Max Guests</th>
+              <th className="p-3 text-center">Units</th>
+              <th className="p-3 text-center">Price / night</th>
               <th className="p-3 text-center">Actions</th>
             </tr>
           </thead>
@@ -93,10 +85,12 @@ const ListRoom = () => {
                 key={room.id}
                 className="border-b last:border-0 text-sm text-gray-600"
               >
-                <td className="p-3 text-center align-middle">{room.roomType}</td>
+                <td className="p-3 text-center align-middle">{room.name}</td>
                 <td className="p-3 text-center align-middle">
                   {getAmenitiesDisplay(room.amenities)}
                 </td>
+                <td className="p-3 text-center align-middle">{room.maxGuests}</td>
+                <td className="p-3 text-center align-middle">{room.rooms?.length || 0}</td>
                 <td className="p-3 text-center align-middle">
                   {currency} {Number(room.pricePerNight).toFixed(2)}
                 </td>

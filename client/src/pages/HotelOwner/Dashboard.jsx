@@ -168,7 +168,7 @@ const Dashboard = () => {
                                             {booking.user.username || 'Unknown'}
                                         </td>
                                         <td className="px-6 py-4 text-center align-middle text-gray-700 text-base">
-                                            {booking.room.roomType}
+                                            {booking.room?.roomType}
                                         </td>
                                         <td className="px-6 py-4 text-center align-middle font-semibold text-gray-800 text-base">
                                             ${Number(booking.totalPrice).toFixed(2)}
