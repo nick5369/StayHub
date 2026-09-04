@@ -55,6 +55,12 @@ model User {
   // is sufficient — no JSONB overhead needed for a flat string list.
   recentSearchedCities String[] @default([])
 
+  // ── Task 8: Essential Guest Auditing ──────────────────────────────────────
+  // Optional fields — not required at registration. Collected before/during booking.
+  firstName  String?
+  lastName   String?
+  phone      String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -79,30 +85,76 @@ model Hotel {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  rooms    Room[]
-  bookings Booking[]
+  // Phase 3: separate marketing data (RoomType) from physical inventory (Room)
+  roomTypes RoomType[]
+  rooms     Room[]
+  bookings  Booking[]
 }
 
-model Room {
-  id            String  @id @default(uuid())
-  hotel         Hotel   @relation(fields: [hotelId], references: [id])
-  hotelId       String
-  roomType      String
+// ---------------------------------------------------------------------------
+// Phase 3 — Inventory Architecture
+//
+// RoomType: marketing data — what the guest sees and books.
+//   • One RoomType can have N physical Rooms (e.g., 5 "Deluxe King" rooms).
+//   • The guest selects a RoomType; the backend assigns any available Room.
+//
+// Room: physical inventory — the actual doors the hotel manages.
+//   • Guests never see room numbers; they are internal to the hotel.
+//   • Created in bulk when the owner adds a room type with a given quantity.
+// ---------------------------------------------------------------------------
+
+model RoomType {
+  id      String @id @default(uuid())
+  hotel   Hotel  @relation(fields: [hotelId], references: [id])
+  hotelId String
+
+  // Marketing display name — e.g. "Single Bed", "Luxury Suite"
+  name          String
   pricePerNight Decimal @db.Decimal(10, 2)
 
-  // Both amenities and images are simple [String] arrays in Mongoose.
-  // Postgres native text[] is a clean 1-to-1 mapping — no child table needed
+  // Both amenities and images are flat string arrays — no child table needed
   // because neither is ever filtered/joined on individual elements.
   amenities String[] @default([])
   images    String[] @default([])
 
+  // ── Task 8: max guests capacity for this room type ──────────────────────
+  maxGuests Int @default(2)
+
+  // Owner-level toggle — hides this room type from listings entirely.
   isAvailable Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms    Room[]
+  bookings Booking[]
+
+  @@index([hotelId])
+  @@index([isAvailable])
+}
+
+model Room {
+  id         String   @id @default(uuid())
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id])
+  roomTypeId String
+  hotel      Hotel    @relation(fields: [hotelId], references: [id])
+  hotelId    String
+
+  // Internal room number (e.g. "101", "102") — NOT shown to guests.
+  roomNumber String
+
+  // Per-unit availability (independent of RoomType.isAvailable).
+  // A room is fully unavailable to guests when EITHER:
+  //   RoomType.isAvailable == false  OR  Room.isAvailable == false
+  isAvailable        Boolean @default(true)
+  isUnderMaintenance Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   bookings Booking[]
 
+  @@index([roomTypeId])
   @@index([hotelId])
   @@index([isAvailable])
 }
@@ -113,8 +165,13 @@ model Booking {
   user   User   @relation(fields: [userId], references: [id])
   userId String
 
+  // Physical room assigned by backend during booking.
   room   Room   @relation(fields: [roomId], references: [id])
   roomId String
+
+  // RoomType stored for display queries (avoids an extra join on every list).
+  roomType   RoomType @relation(fields: [roomTypeId], references: [id])
+  roomTypeId String
 
   hotel   Hotel  @relation(fields: [hotelId], references: [id])
   hotelId String
@@ -127,7 +184,6 @@ model Booking {
 
   status BookingStatus @default(pending)
 
-  // Default matches the original Mongoose schema default.
   paymentMethod PaymentMethod @default(PAY_AT_HOTEL)
   isPaid        Boolean       @default(false)
 
@@ -147,9 +203,9 @@ model Booking {
   //   existingCheckOut >= newCheckIn
   //
   // ---------------------------------------------------------------------------
-  // DB-level guarantee (optional, add after initial migration):
+  // DB-level guarantee (add after initial migration):
   //   1. Enable btree_gist extension:  CREATE EXTENSION IF NOT EXISTS btree_gist;
-  //   2. Add EXCLUDE constraint:
+  //   2. Add EXCLUDE constraint on the physical Room level:
   //      ALTER TABLE "Booking"
   //        ADD CONSTRAINT booking_no_overlap
   //        EXCLUDE USING gist (
@@ -159,6 +215,7 @@ model Booking {
   // ---------------------------------------------------------------------------
 
   @@index([roomId, checkInDate, checkOutDate])
+  @@index([roomTypeId])
   @@index([userId])
   @@index([hotelId])
   @@index([status])

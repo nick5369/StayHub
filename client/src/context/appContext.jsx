@@ -62,6 +62,9 @@ export const AppProvider = ({ children }) => {
           email: data.email,
           image: data.image,
           role: data.role,
+          firstName: data.firstName, // Phase 3
+          lastName: data.lastName,   // Phase 3
+          phone: data.phone,         // Phase 3
         });
         setIsOwner(data.role === "hotelOwner");
         setSearchedCities(data.recentSearchedCities);

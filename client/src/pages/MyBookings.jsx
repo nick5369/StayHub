@@ -13,26 +13,6 @@ const STATUS_CONFIG = {
   refunded:  { label: 'Refunded',  classes: 'bg-purple-100 text-purple-700' },
 };
 
-const BookIcon = () => (
-  <svg
-    className="w-6 h-6 text-gray-700"
-    aria-hidden="true"
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    fill="none"
-    viewBox="0 0 24 24"
-  >
-    <path
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-      d="M5 19V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v13H7a2 2 0 0 0-2 2Zm0 0a2 2 0 0 0 2 2h12M9 3v14m7 0v4"
-    />
-  </svg>
-);
-
 const MyBookings = () => {
 
   const { axios, user } = useAppContext();
@@ -108,8 +88,8 @@ const MyBookings = () => {
                 {/* Left section: Image */}
                 <div className="w-full md:w-36 flex-shrink-0">
                   <img
-                    src={booking.room.images[0]}
-                    alt={booking.room.roomType}
+                    src={booking.room?.images?.[0] || ""}
+                    alt={booking.room?.roomType}
                     className={`w-full h-28 md:h-36 object-cover rounded-lg ${isCancelled ? 'grayscale' : ''}`}
                   />
                 </div>
@@ -117,7 +97,7 @@ const MyBookings = () => {
                 {/* Middle section: Booking info */}
                 <div className="flex-1 mt-4 md:mt-0 md:ml-6 space-y-2">
                   <h3 className={`font-semibold text-lg ${isCancelled ? 'line-through text-gray-400' : ''}`}>
-                    {booking.room.roomType}
+                    {booking.room?.roomType}
                   </h3>
                   <p className="text-gray-700 font-medium">{booking.hotel.name}</p>
                   <p className="text-gray-500 text-sm">{booking.hotel.address}</p>
@@ -129,7 +109,7 @@ const MyBookings = () => {
 
                   {/* Amenities Icons */}
                   <div className="flex items-center space-x-2 mt-1">
-                    {booking.room.amenities.map((amenity) => (
+                    {booking.room?.amenities?.map((amenity) => (
                       <img
                         key={amenity}
                         src={facilityIcons[amenity]}

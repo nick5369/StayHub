@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { FaMapMarkerAlt, FaConciergeBell, FaMountain, FaSwimmer, FaWifi, FaCoffee } from "react-icons/fa";
+import { FaMapMarkerAlt, FaConciergeBell, FaMountain, FaSwimmer, FaWifi, FaCoffee, FaUserFriends } from "react-icons/fa";
 
 import { useAppContext } from "../context/appContext.jsx";
 import toast from "react-hot-toast";
@@ -20,9 +20,12 @@ const RoomDetails = () => {
         if(!checkInDate || !checkOutDate){
             return toast.error('Please select check-in and check-out dates')
         }
+        if (guests > room.maxGuests) {
+            return toast.error(`Exceeds max guest capacity of ${room.maxGuests}`);
+        }
         try {
             const {data} = await axios.post('/api/bookings/check-availability',
-                {room : id, checkInDate, checkOutDate}
+                {roomTypeId : id, checkInDate, checkOutDate}
             )
             if(data.success){
                 if(data.isAvailable){
@@ -50,8 +53,11 @@ const RoomDetails = () => {
                 return checkAvailability()
             }
             else{
+                if (guests > room.maxGuests) {
+                    return toast.error(`Exceeds max guest capacity of ${room.maxGuests}`);
+                }
                 const {data} = await axios.post('/api/bookings/book',
-                    {room:id, checkInDate, checkOutDate, guests,paymentMethod : 'PAY_AT_HOTEL'}
+                    {roomTypeId:id, checkInDate, checkOutDate, guests,paymentMethod : 'PAY_AT_HOTEL'}
                 )
                 if(data.success){
                     toast.success(data.message)
@@ -136,9 +142,12 @@ const RoomDetails = () => {
             {/* Price */}
             <div className="mt-4 text-2xl font-bold">${Number(room.pricePerNight).toFixed(2)}/night</div>
 
-            {/* Amenities */}
+            {/* Amenities & Capacity */}
             <h2 className="text-xl font-semibold mt-6">Experience Luxury Like Never Before</h2>
             <div className="flex flex-wrap gap-3 mt-3">
+                <span className="px-4 py-2 border rounded-lg text-blue-700 bg-blue-50 flex items-center gap-2 font-medium">
+                    <FaUserFriends /> Up to {room.maxGuests} Guests
+                </span>
                 {room.amenities.map((amenity, idx) => (
                     <span
                         key={idx}
@@ -196,6 +205,7 @@ const RoomDetails = () => {
                         <input
                             type="number"
                             min={1}
+                            max={room.maxGuests}
                             className="border rounded-lg p-2"
                             onChange={(e)=>setGuests(Number(e.target.value))}
                             value={guests}

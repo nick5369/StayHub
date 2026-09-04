@@ -5,19 +5,15 @@ import { useAppContext } from "../../context/appContext";
 import toast from "react-hot-toast";
 
 const Addroom = () => {
-
-  const {axios} = useAppContext();
-  const [isLoading,setIsLoading] = useState(false)
-  const [Images, setImages] = useState({
-    1: null,
-    2: null,
-    3: null,
-    4: null,
-  });
+  const { axios } = useAppContext();
+  const [isLoading, setIsLoading] = useState(false);
+  const [Images, setImages] = useState({ 1: null, 2: null, 3: null, 4: null });
 
   const [Inputs, setInputs] = useState({
-    roomType: "",
+    name: "",              // room type display name (e.g. "Single Bed")
     pricePerNight: "",
+    maxGuests: 2,          // Task 8 — capacity
+    quantity: 1,           // number of physical rooms to auto-create
     amenities: {
       "Free WiFi": false,
       "Free Breakfast": false,
@@ -28,73 +24,69 @@ const Addroom = () => {
   });
 
   const handleInputChange = (e) => {
-    const {name,value} = e.target;
-    setInputs((prev)=> ({...prev, [name]:value}))
+    const { name, value } = e.target;
+    setInputs((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleAmenityChange = (e) => {
     const { name, checked } = e.target;
     setInputs((prev) => ({
       ...prev,
-      amenities: {
-        ...prev.amenities,
-        [name]: checked,
-      },
+      amenities: { ...prev.amenities, [name]: checked },
     }));
   };
 
   const handleImageChange = (e, index) => {
     const file = e.target.files[0];
-    if (file) {
-      setImages((prev) => ({ ...prev, [index]: file }));
-    }
+    if (file) setImages((prev) => ({ ...prev, [index]: file }));
   };
 
   const removeImage = (index) => {
     setImages((prev) => ({ ...prev, [index]: null }));
   };
 
-  
+  const resetForm = () => {
+    setInputs({
+      name: "",
+      pricePerNight: "",
+      maxGuests: 2,
+      quantity: 1,
+      amenities: {
+        "Free WiFi": false,
+        "Free Breakfast": false,
+        "Room Service": false,
+        "Mountain View": false,
+        "Pool Access": false,
+      },
+    });
+    setImages({ 1: null, 2: null, 3: null, 4: null });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     try {
       const formData = new FormData();
-      formData.append("roomType", Inputs.roomType);
+      formData.append("name", Inputs.name);
       formData.append("pricePerNight", Inputs.pricePerNight);
       formData.append("amenities", JSON.stringify(Inputs.amenities));
+      formData.append("maxGuests", Inputs.maxGuests);
+      formData.append("quantity", Inputs.quantity);
       Object.values(Images).forEach((img) => {
         if (img) formData.append("images", img);
       });
-      const {data} = await axios.post('/api/rooms', formData)
 
-      if(data.success){
-        setInputs({
-          roomType: "",
-          pricePerNight: "",
-          amenities: {
-            "Free WiFi": false,
-            "Free Breakfast": false,
-            "Room Service": false,
-            "Mountain View": false,
-            "Pool Access": false,
-          },
-        })
-        setImages({
-          1: null,
-          2: null,
-          3: null,
-          4: null,  
-        })
-        toast.success("Room added successfully");
-      }
-      else{
+      const { data } = await axios.post("/api/rooms", formData);
+      if (data.success) {
+        toast.success(data.message);
+        resetForm();
+      } else {
         toast.error(data.message);
       }
     } catch (error) {
       console.error("Error adding room:", error);
       toast.error(error.response?.data?.message || error.message || "Failed to add room");
-    } finally{
+    } finally {
       setIsLoading(false);
     }
   };
@@ -105,21 +97,21 @@ const Addroom = () => {
       className="max-w-3xl mx-auto bg-white p-8 rounded-2xl shadow-lg space-y-8"
     >
       <Title
-        title="Add Room"
+        title="Add Room Type"
         align="left"
         font="outfit"
-        subtitle="Provide accurate room details, pricing, and amenities to enhance the booking experience."
+        subtitle="Define a room category with its marketing details, capacity, and how many physical units exist in your hotel."
       />
 
-      {/* Room Type & Price */}
+      {/* Room Type Name & Price */}
       <div className="grid md:grid-cols-2 gap-6">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             Room Type
           </label>
           <select
-            name="roomType"
-            value={Inputs.roomType}
+            name="name"
+            value={Inputs.name}
             onChange={handleInputChange}
             className="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             required
@@ -134,17 +126,60 @@ const Addroom = () => {
 
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Price Per Night (₹)
+            Price Per Night ($)
           </label>
           <input
-            type="text"
+            type="number"
             name="pricePerNight"
             value={Inputs.pricePerNight}
             onChange={handleInputChange}
             className="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             min="0"
+            step="0.01"
+            placeholder="e.g. 150"
             required
           />
+        </div>
+      </div>
+
+      {/* Max Guests & Quantity */}
+      <div className="grid md:grid-cols-2 gap-6">
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Max Guests <span className="text-xs font-normal text-gray-500">(per room)</span>
+          </label>
+          <input
+            type="number"
+            name="maxGuests"
+            value={Inputs.maxGuests}
+            onChange={handleInputChange}
+            className="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            min="1"
+            max="20"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            Number of Rooms{" "}
+            <span className="text-xs font-normal text-gray-500">
+              (total units of this type in the hotel)
+            </span>
+          </label>
+          <input
+            type="number"
+            name="quantity"
+            value={Inputs.quantity}
+            onChange={handleInputChange}
+            className="w-full border border-gray-300 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            min="1"
+            max="100"
+            required
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            e.g. enter 5 if you have 5 identical Luxury Rooms
+          </p>
         </div>
       </div>
 
@@ -175,7 +210,7 @@ const Addroom = () => {
       {/* Images */}
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-3">
-          Room Images (Max 4)
+          Room Images <span className="text-xs font-normal text-gray-500">(max 4)</span>
         </label>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((index) => (
@@ -219,14 +254,13 @@ const Addroom = () => {
       </div>
 
       {/* Submit */}
-      <div>
-        <button
-          type="submit"
-          className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md"
-        >
-          { isLoading ? "Adding Room..." : "Add Room"}
-        </button>
-      </div>
+      <button
+        type="submit"
+        disabled={isLoading}
+        className="w-full bg-blue-600 text-white font-semibold py-3 rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {isLoading ? "Creating Room Type…" : "Add Room Type"}
+      </button>
     </form>
   );
 };

@@ -1,19 +1,25 @@
 // controllers/bookingController.js
+//
+// Phase 3 — Updated for RoomType / Room split.
+//
+// Key changes:
+//  • checkAvailability now operates on roomTypeId: finds ANY free physical Room
+//    of that type for the requested date range.
+//  • createBooking receives roomTypeId, picks a free physical Room inside the
+//    transaction (row-locks it), and stores both roomId + roomTypeId on Booking.
+//  • Guest count validation: guests must not exceed roomType.maxGuests (Task 8).
+//  • getUserBookings / getHotelBookings include roomType nested data for display.
 
 import prisma from "../configs/db.js";
 import transporter from "../configs/nodemailer.js";
 import stripe from "stripe";
 
 // ---------------------------------------------------------------------------
-// Helper: check if a room is available for the given date range.
+// Helper: check if a RoomType has ANY available physical Room for a date range.
 //
-// Replaces Mongoose:
-//   Booking.find({ room, checkInDate: { $lte: checkOutDate }, checkOutDate: { $gte: checkInDate } })
-//
-// Prisma date-range overlap condition:
-//   existingCheckIn  <= newCheckOut  AND  existingCheckOut >= newCheckIn
+// Returns { isAvailable: boolean, availableRoomId: string|null }
 // ---------------------------------------------------------------------------
-export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => {
+export const checkAvailability = async ({ checkInDate, checkOutDate, roomTypeId }) => {
     try {
         const inDate = new Date(checkInDate);
         inDate.setUTCHours(11, 0, 0, 0);
@@ -21,9 +27,23 @@ export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => 
         const outDate = new Date(checkOutDate);
         outDate.setUTCHours(10, 0, 0, 0);
 
-        const overlappingBookings = await prisma.booking.findMany({
+        // Find all physical rooms for this type that are active.
+        const physicalRooms = await prisma.room.findMany({
             where: {
-                roomId: room,
+                roomTypeId,
+                isAvailable: true,
+                isUnderMaintenance: false,
+                roomType: { isAvailable: true }, // respect owner-level toggle
+            },
+            select: { id: true },
+        });
+
+        if (physicalRooms.length === 0) return false;
+
+        // Find rooms that DO have an overlapping booking (busy rooms).
+        const busyRoomIds = await prisma.booking.findMany({
+            where: {
+                roomId: { in: physicalRooms.map(r => r.id) },
                 status: { notIn: ['cancelled', 'refunded'] },
                 OR: [
                     { expiresAt: null },
@@ -34,20 +54,29 @@ export const checkAvailability = async ({ checkInDate, checkOutDate, room }) => 
                     { checkOutDate: { gt: inDate } },
                 ],
             },
+            select: { roomId: true },
         });
 
-        return overlappingBookings.length === 0;
+        const busyIds = new Set(busyRoomIds.map(b => b.roomId));
+
+        // A room is available if it is NOT in the busy set.
+        const freeRoom = physicalRooms.find(r => !busyIds.has(r.id));
+        return freeRoom ? true : false;
+
     } catch (error) {
-        console.error(error.message);
+        console.error('checkAvailability error:', error.message);
         return false;
     }
-}
+};
 
+// ---------------------------------------------------------------------------
 // POST /api/bookings/check-availability
-// Response shape unchanged: { success, isAvailable }
+// Body: { roomTypeId, checkInDate, checkOutDate }
+// Response: { success, isAvailable }
+// ---------------------------------------------------------------------------
 export const checkAvailabilityApi = async (req, res) => {
     try {
-        const { checkInDate, checkOutDate, room } = req.body;
+        const { roomTypeId, checkInDate, checkOutDate } = req.body;
 
         if (!checkInDate || !checkOutDate) {
             return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
@@ -56,48 +85,17 @@ export const checkAvailabilityApi = async (req, res) => {
             return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
         }
 
-        const isAvailable = await checkAvailability({ checkInDate, checkOutDate, room });
+        const isAvailable = await checkAvailability({ checkInDate, checkOutDate, roomTypeId });
         return res.json({ success: true, isAvailable });
+
     } catch (error) {
         return res.json({ success: false, message: error.message });
     }
-}
+};
 
 // ---------------------------------------------------------------------------
-// POST /api/bookings/book  (createBooking)
-//
-// Concurrency-safety strategy
-// ───────────────────────────
-// Problem: two simultaneous requests for the same room + overlapping dates can
-// both pass the application-level availability check before either has written
-// its Booking row, producing a double-booking.
-//
-// Solution — three layers of defence:
-//
-//  1. FOR UPDATE row lock on Room (this function, step A below)
-//     SELECT … FOR UPDATE on the Room row serialises all concurrent requests
-//     for the *same* room.  A second transaction trying to lock the same room
-//     will block at that SELECT until the first transaction commits or rolls
-//     back.  Requests for *different* rooms are unaffected and proceed in
-//     parallel.
-//
-//  2. Overlap re-check inside the lock (step B below)
-//     The availability query is re-run inside the transaction after the lock
-//     is held, using the same `tx` client, so it reads with full visibility of
-//     any rows committed just before us.  This is the authoritative check.
-//
-//  3. Exclusion constraint on Booking (defense-in-depth backstop)
-//     The DB-level constraint (booking_no_overlap, added in the 20260901
-//     migration) rejects any INSERT that would produce an overlap even if the
-//     application-level check somehow misses a race.  We catch Postgres error
-//     code 23P01 and return the same 400 so the client never sees a raw SQL
-//     error.
-//
-// Nothing slow (Cloudinary, email) runs inside the transaction so the Postgres
-// row lock is held for the minimum possible time.
+// Sentinel error thrown when no physical room is free for the requested dates.
 // ---------------------------------------------------------------------------
-
-/** Sentinel error thrown when the room is already booked for the requested dates. */
 class RoomUnavailableError extends Error {
     constructor() {
         super("Room is no longer available for the selected dates.");
@@ -105,14 +103,21 @@ class RoomUnavailableError extends Error {
     }
 }
 
-// POST /api/bookings/book
-// Creates a booking and sends a confirmation email.
+// ---------------------------------------------------------------------------
+// POST /api/bookings/book  (createBooking)
 //
-// Field mapping note:
-//   - booking._id (Mongo ObjectId hex) → booking.id (UUID string) — used in email body only.
-//   - Response shape unchanged: { success, message }
+// Body: { roomTypeId, checkInDate, checkOutDate, guests }
+//
+// Concurrency strategy (same three layers as before, now per physical Room):
+//  1. Cancel expired payment_pending bookings for this roomTypeId (lazy eval).
+//  2. Find a free physical Room for the date range.
+//  3. Row-lock that specific Room (SELECT … FOR UPDATE).
+//  4. Re-check availability inside the lock.
+//  5. Validate guests <= roomType.maxGuests  (Task 8).
+//  6. Create Booking with roomId (physical) + roomTypeId (for display).
+// ---------------------------------------------------------------------------
 export const createBooking = async (req, res) => {
-    const { room: roomId, checkInDate, checkOutDate, guests } = req.body;
+    const { roomTypeId, checkInDate, checkOutDate, guests } = req.body;
 
     if (!checkInDate || !checkOutDate) {
         return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
@@ -128,38 +133,94 @@ export const createBooking = async (req, res) => {
         return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
     }
 
-    // req.user.id is the internal UUID set by the JWT auth middleware.
     const userId = req.user.id;
-
     let booking;
-    let roomData;
+    let roomTypeData;
 
     try {
-        // ── Run the critical section inside a single Postgres transaction ──────
-        ({ booking, roomData } = await prisma.$transaction(async (tx) => {
+        ({ booking, roomTypeData } = await prisma.$transaction(async (tx) => {
 
-            // ── A. Row lock on Room ──────────────────────────────────────────
-            // FOR UPDATE on the Room row serialises concurrent requests for
-            // the same room.  A second tx requesting the same roomId blocks
-            // here until we commit/rollback.  Different rooms are unaffected.
-            await tx.$queryRaw`SELECT id FROM "Room" WHERE id = ${roomId} FOR UPDATE`;
+            // ── 1. Cancel expired payment_pending bookings for any room of this type ─
+            const activeRoomIds = (await tx.room.findMany({
+                where: { roomTypeId },
+                select: { id: true },
+            })).map(r => r.id);
 
-            // ── CANCEL EXPIRED BOOKINGS (Lazy Evaluation) ────────────────────
-            await tx.booking.updateMany({
-                where: {
-                    roomId,
-                    status: 'payment_pending',
-                    expiresAt: { lte: new Date() }
-                },
-                data: { status: 'cancelled' }
+            if (activeRoomIds.length > 0) {
+                await tx.booking.updateMany({
+                    where: {
+                        roomId: { in: activeRoomIds },
+                        status: 'payment_pending',
+                        expiresAt: { lte: new Date() },
+                    },
+                    data: { status: 'cancelled' },
+                });
+            }
+
+            // ── 2. Load the RoomType for price + maxGuests validation ────────────
+            const txRoomType = await tx.roomType.findUnique({
+                where: { id: roomTypeId },
+                include: { hotel: true },
             });
 
-            // ── B. Overlap check (re-run inside the lock) ────────────────────
-            // Must use `tx`, not the top-level `prisma`, so the query runs
-            // within the locked transaction scope and sees the latest state.
-            const overlapping = await tx.booking.findMany({
+            if (!txRoomType) {
+                throw Object.assign(new Error("Room type not found"), { status: 404 });
+            }
+
+            // ── Task 8: Validate guest count ─────────────────────────────────────
+            const guestCount = parseInt(guests, 10) || 1;
+            if (guestCount > txRoomType.maxGuests) {
+                throw Object.assign(
+                    new Error(`This room type accommodates a maximum of ${txRoomType.maxGuests} guests.`),
+                    { status: 400, isGuestError: true }
+                );
+            }
+
+            // ── 3. Find a free physical Room (not overlapping) ───────────────────
+            const physicalRooms = await tx.room.findMany({
                 where: {
-                    roomId,
+                    roomTypeId,
+                    isAvailable: true,
+                    isUnderMaintenance: false,
+                },
+                select: { id: true },
+            });
+
+            if (physicalRooms.length === 0) {
+                throw new RoomUnavailableError();
+            }
+
+            // Find rooms with overlapping bookings.
+            const busyBookings = await tx.booking.findMany({
+                where: {
+                    roomId: { in: physicalRooms.map(r => r.id) },
+                    status: { notIn: ['cancelled', 'refunded'] },
+                    OR: [
+                        { expiresAt: null },
+                        { expiresAt: { gt: new Date() } },
+                    ],
+                    AND: [
+                        { checkInDate: { lt: outDate } },
+                        { checkOutDate: { gt: inDate } },
+                    ],
+                },
+                select: { roomId: true },
+            });
+
+            const busyIds = new Set(busyBookings.map(b => b.roomId));
+            const freeRoom = physicalRooms.find(r => !busyIds.has(r.id));
+
+            if (!freeRoom) {
+                throw new RoomUnavailableError();
+            }
+
+            // ── 4. Row-lock the chosen physical Room ─────────────────────────────
+            await tx.$queryRaw`SELECT id FROM "Room" WHERE id = ${freeRoom.id} FOR UPDATE`;
+
+            // ── 5. Re-check just this room inside the lock ───────────────────────
+            const overlapCheck = await tx.booking.findFirst({
+                where: {
+                    roomId: freeRoom.id,
                     status: { notIn: ['cancelled', 'refunded'] },
                     OR: [
                         { expiresAt: null },
@@ -172,116 +233,97 @@ export const createBooking = async (req, res) => {
                 },
             });
 
-            if (overlapping.length > 0) {
+            if (overlapCheck) {
                 throw new RoomUnavailableError();
             }
 
-            // ── C. Load room + hotel ─────────────────────────────────────────
-            const txRoomData = await tx.room.findUnique({
-                where: { id: roomId },
-                include: { hotel: true },
-            });
-
-            if (!txRoomData) {
-                throw Object.assign(new Error("Room not found"), { status: 404 });
-            }
-
-            // ── D. Compute price (Decimal-safe) ──────────────────────────────
+            // ── 6. Compute price (Decimal-safe) ──────────────────────────────────
             const timeDiff = Math.abs(
                 new Date(checkOutDate).setUTCHours(0, 0, 0, 0) - new Date(checkInDate).setUTCHours(0, 0, 0, 0)
             );
             const numberOfNights = Math.round(timeDiff / (1000 * 3600 * 24));
-            const totalPrice = txRoomData.pricePerNight.toNumber() * numberOfNights;
+            const totalPrice = txRoomType.pricePerNight.toNumber() * numberOfNights;
 
-            // ── E. Create Booking row ────────────────────────────────────────
+            // ── 7. Create Booking row ─────────────────────────────────────────────
             const txBooking = await tx.booking.create({
                 data: {
                     userId,
-                    roomId,
-                    hotelId: txRoomData.hotel.id,
-                    guests,
+                    roomId: freeRoom.id,         // physical Room assigned by backend
+                    roomTypeId,                  // for display queries
+                    hotelId: txRoomType.hotel.id,
+                    guests: guestCount,
                     checkInDate: inDate,
                     checkOutDate: outDate,
                     totalPrice,
                     status: "payment_pending",
-                    paymentMethod: "STRIPE",
+                    paymentMethod: "PAY_AT_HOTEL",
                     expiresAt: new Date(Date.now() + 15 * 60000),
                 },
             });
 
-            // No Cloudinary uploads, no email calls here — those would hold
-            // the Postgres lock unnecessarily and could roll back the booking
-            // if they failed.
-            return { booking: txBooking, roomData: txRoomData };
+            return { booking: txBooking, roomTypeData: txRoomType };
         }));
 
     } catch (error) {
 
-        // ── Room not available (application-level check) ─────────────────────
         if (error instanceof RoomUnavailableError) {
-            return res
-                .status(400)
-                .json({ success: false, message: error.message });
+            return res.status(400).json({ success: false, message: error.message });
         }
 
-        // ── Exclusion-constraint violation (DB-level backstop) ───────────────
-        // Postgres error code 23P01 = exclusion_violation.
-        // This fires only if the application-level overlap check above somehow
-        // missed a race; log the raw detail server-side for investigation but
-        // don't leak SQL info to the client.
+        // Guest count validation error
+        if (error.isGuestError) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
+
         if (error.code === "23P01") {
-            console.error("[createBooking] Exclusion constraint fired (race condition):", error);
-            return res
-                .status(400)
-                .json({ success: false, message: "Room is no longer available for the selected dates." });
+            console.error("[createBooking] Exclusion constraint fired:", error);
+            return res.status(400).json({ success: false, message: "Room is no longer available for the selected dates." });
         }
 
-        // ── Room not found ───────────────────────────────────────────────────
         if (error.status === 404) {
             return res.status(404).json({ success: false, message: error.message });
         }
 
-        // ── Unexpected error ─────────────────────────────────────────────────
         console.error("[createBooking] Unexpected error:", error);
         return res.status(500).json({ success: false, message: "Server error" });
     }
 
     // ── Send confirmation email OUTSIDE the transaction ────────────────────
-    // The booking is already committed at this point.  Email failure must NOT
-    // roll back the booking or return an error to the client — we just log it.
     try {
         const mailOptions = {
             from: process.env.SENDER_EMAIL,
             to: req.user.email,
-            subject: 'Hotel Bookings Details - StayHub',
+            subject: 'Hotel Booking Confirmation - StayHub',
             html: `
                 <h1>Booking Confirmed!</h1>
-                <p>Your booking for the room at ${roomData.hotel.name} has been confirmed.</p>
+                <p>Your booking for <strong>${roomTypeData.name}</strong> at ${roomTypeData.hotel.name} has been placed.</p>
                 <h2>Booking Details:</h2>
                 <ul>
-                    <li><strong> Booking ID : </strong> ${booking.id}</li>
-                    <li><strong> Hotel Name :</strong> ${roomData.hotel.name} </li>
-                    <li> <strong> Location : </strong> ${roomData.hotel.address} </li>
-                    <li> <strong> Date : </strong> ${booking.checkInDate.toDateString()} </li>
-                    <li> <strong> Booking Amount : </strong> ${'$'} ${booking.totalPrice} /night</li>
+                    <li><strong>Booking ID:</strong> ${booking.id}</li>
+                    <li><strong>Hotel Name:</strong> ${roomTypeData.hotel.name}</li>
+                    <li><strong>Room Type:</strong> ${roomTypeData.name}</li>
+                    <li><strong>Location:</strong> ${roomTypeData.hotel.address}</li>
+                    <li><strong>Check-In:</strong> ${booking.checkInDate.toDateString()}</li>
+                    <li><strong>Check-Out:</strong> ${booking.checkOutDate.toDateString()}</li>
+                    <li><strong>Guests:</strong> ${booking.guests}</li>
+                    <li><strong>Total Amount:</strong> $${booking.totalPrice}</li>
                 </ul>
                 <p>We look forward to hosting you!</p>
             `
         };
-
         await transporter.sendMail(mailOptions);
     } catch (emailError) {
-        // Booking succeeded; email failure is non-fatal.
-        console.error("[createBooking] Confirmation email failed (booking still committed):", emailError);
+        console.error("[createBooking] Confirmation email failed:", emailError);
     }
 
     return res.json({ success: true, message: "Booking successful" });
-}
+};
 
+// ---------------------------------------------------------------------------
 // GET /api/bookings/user
-// Returns all bookings for the current user, with room and hotel data.
-// Response shape unchanged: { success, bookings }
-// Each booking now includes room and hotel as nested objects (same as Mongoose populate).
+// Returns all bookings for the current user, newest first.
+// Includes roomType (for images/name/amenities) — guests never see roomNumber.
+// ---------------------------------------------------------------------------
 export const getUserBookings = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -289,22 +331,54 @@ export const getUserBookings = async (req, res) => {
         const bookings = await prisma.booking.findMany({
             where: { userId },
             include: {
-                room: true,
+                room: {
+                    select: {
+                        id: true,
+                        roomNumber: true, // for internal reference only
+                    },
+                },
+                roomType: {
+                    select: {
+                        id: true,
+                        name: true,
+                        pricePerNight: true,
+                        amenities: true,
+                        images: true,
+                        maxGuests: true,
+                    },
+                },
                 hotel: true,
             },
             orderBy: { createdAt: 'desc' },
         });
 
-        return res.json({ success: true, bookings });
+        // Normalize: attach roomType data onto `room` object for frontend compatibility.
+        // Frontend accesses booking.room.roomType, booking.room.images[0], etc.
+        const normalized = bookings.map(b => ({
+            ...b,
+            room: {
+                ...b.room,
+                roomType: b.roomType.name,      // string e.g. "Luxury Suite"
+                images: b.roomType.images,
+                amenities: b.roomType.amenities,
+                pricePerNight: b.roomType.pricePerNight,
+                maxGuests: b.roomType.maxGuests,
+            },
+        }));
+
+        return res.json({ success: true, bookings: normalized });
+
     } catch (error) {
         console.error(error.message);
         return res.status(500).json({ success: false, message: "Server error" });
     }
-}
+};
 
+// ---------------------------------------------------------------------------
 // GET /api/bookings/hotel
-// Returns dashboard data for the hotel owner: all bookings with totals.
-// Response shape unchanged: { success, dashboardData: { bookings, totalBookings, totalRevenue } }
+// Dashboard data for the hotel owner.
+// Response: { success, dashboardData: { bookings, totalBookings, totalRevenue } }
+// ---------------------------------------------------------------------------
 export const getHotelBookings = async (req, res) => {
     try {
         const hotel = await prisma.hotel.findFirst({
@@ -318,71 +392,80 @@ export const getHotelBookings = async (req, res) => {
         const bookings = await prisma.booking.findMany({
             where: { hotelId: hotel.id },
             include: {
-                room: true,
+                room: {
+                    select: { id: true, roomNumber: true },
+                },
+                roomType: {
+                    select: { id: true, name: true, pricePerNight: true },
+                },
                 hotel: true,
                 user: true,
             },
             orderBy: { createdAt: 'desc' },
         });
 
-        const totalBookings = bookings.length;
-        const totalRevenue = bookings.reduce((total, booking) => total + booking.totalPrice.toNumber(), 0);
+        // Normalize: attach roomType name onto room object so dashboard template
+        // booking.room.roomType still works.
+        const normalized = bookings.map(b => ({
+            ...b,
+            room: {
+                ...b.room,
+                roomType: b.roomType.name,
+            },
+        }));
 
-        return res.json({ success: true, dashboardData: { bookings, totalBookings, totalRevenue } });
+        const totalBookings = bookings.length;
+        const totalRevenue = bookings.reduce((total, b) => total + b.totalPrice.toNumber(), 0);
+
+        return res.json({ success: true, dashboardData: { bookings: normalized, totalBookings, totalRevenue } });
 
     } catch (error) {
         console.error(error.message);
         return res.status(500).json({ success: false, message: "Failed to fetch bookings" });
     }
-}
+};
 
+// ---------------------------------------------------------------------------
 // POST /api/bookings/stripe-payment
-// Creates a Stripe Checkout session for a booking.
-// bookingId in session.metadata is now a UUID string (not a Mongo ObjectId).
-// Response shape unchanged: { success, url }
+// Body: { bookingId }
+// ---------------------------------------------------------------------------
 export const stripePayment = async (req, res) => {
     try {
         const { bookingId } = req.body;
 
         const booking = await prisma.booking.findUnique({
             where: { id: bookingId },
+            include: {
+                roomType: { include: { hotel: true } },
+            },
         });
 
         if (!booking) {
             return res.json({ success: false, message: "Booking not found" });
         }
 
-        const roomData = await prisma.room.findUnique({
-            where: { id: booking.roomId },
-            include: { hotel: true },
-        });
-
         const totalPrice = booking.totalPrice.toNumber();
         const { origin } = req.headers;
 
         const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY);
 
-        const line_items = [
-            {
-                price_data: {
-                    currency: 'usd',
-                    product_data: {
-                        name: roomData.hotel.name,
-                    },
-                    unit_amount: Math.round(Number(totalPrice) * 100),
-                },
-                quantity: 1,
-            }
-        ];
-
         const session = await stripeInstance.checkout.sessions.create({
-            line_items,
+            line_items: [
+                {
+                    price_data: {
+                        currency: 'usd',
+                        product_data: {
+                            name: `${booking.roomType.hotel.name} — ${booking.roomType.name}`,
+                        },
+                        unit_amount: Math.round(totalPrice * 100),
+                    },
+                    quantity: 1,
+                },
+            ],
             mode: "payment",
             success_url: `${origin}/loader/my-bookings`,
             cancel_url: `${origin}/my-bookings`,
-            metadata: {
-                bookingId,  // UUID string — Stripe webhook will use this to look up the row
-            }
+            metadata: { bookingId },
         });
 
         await prisma.booking.update({
@@ -398,23 +481,18 @@ export const stripePayment = async (req, res) => {
 
     } catch (error) {
         console.error('stripePayment error:', error.message);
-        res.json({ success: false, message: "payment failed" });
+        res.json({ success: false, message: "Payment failed" });
     }
-}
+};
 
 // ---------------------------------------------------------------------------
 // POST /api/bookings/:bookingId/confirm
-//
-// Allows a hotel owner to confirm a "Pay At Hotel" booking.
-// Only the owner of the hotel the booking belongs to may call this.
-// Idempotent: calling on an already-confirmed booking returns 200.
 // ---------------------------------------------------------------------------
 export const confirmBooking = async (req, res) => {
     try {
         const { bookingId } = req.params;
         const requesterId = req.user.id;
 
-        // ── 1. Load booking ──────────────────────────────────────────────────
         const booking = await prisma.booking.findUnique({
             where: { id: bookingId },
             include: { hotel: true },
@@ -424,14 +502,11 @@ export const confirmBooking = async (req, res) => {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }
 
-        // ── 2. Authorise: requester must be the hotel owner ──────────────────
         if (booking.hotel.ownerId !== requesterId) {
             return res.status(403).json({ success: false, message: "Not authorised to confirm this booking" });
         }
 
-        // ── 3. Idempotency guard ─────────────────────────────────────────────
         if (booking.status === "confirmed") {
-            console.log(`[confirmBooking] Booking ${bookingId} already confirmed — no-op.`);
             return res.json({ success: true, message: "Booking is already confirmed" });
         }
 
@@ -439,35 +514,27 @@ export const confirmBooking = async (req, res) => {
             return res.status(400).json({ success: false, message: "Cannot confirm a cancelled booking" });
         }
 
-        // ── 4. Confirm ───────────────────────────────────────────────────────
         await prisma.booking.update({
             where: { id: bookingId },
             data: { status: "confirmed" },
         });
 
-        console.log(`[confirmBooking] Booking ${bookingId} confirmed by owner ${requesterId}.`);
         return res.json({ success: true, message: "Booking confirmed" });
 
     } catch (error) {
-        console.error("[confirmBooking] Unexpected error:", error);
+        console.error("[confirmBooking] error:", error);
         return res.status(500).json({ success: false, message: "Server error" });
     }
 };
 
 // ---------------------------------------------------------------------------
 // POST /api/bookings/:bookingId/cancel
-//
-// Allows either the booking's own user OR the hotel owner to cancel a booking.
-// Idempotent: calling on an already-cancelled booking returns 200.
-// Cancelling frees the date range for other bookings because the DB exclusion
-// constraint (booking_no_overlap) explicitly excludes cancelled bookings.
 // ---------------------------------------------------------------------------
 export const cancelBooking = async (req, res) => {
     try {
         const { bookingId } = req.params;
         const requesterId = req.user.id;
 
-        // ── 1. Load booking ──────────────────────────────────────────────────
         const booking = await prisma.booking.findUnique({
             where: { id: bookingId },
             include: { hotel: true },
@@ -477,7 +544,6 @@ export const cancelBooking = async (req, res) => {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }
 
-        // ── 2. Authorise: requester must be the guest OR the hotel owner ─────
         const isGuest = booking.userId === requesterId;
         const isOwner = booking.hotel.ownerId === requesterId;
 
@@ -485,23 +551,19 @@ export const cancelBooking = async (req, res) => {
             return res.status(403).json({ success: false, message: "Not authorised to cancel this booking" });
         }
 
-        // ── 3. Idempotency guard ─────────────────────────────────────────────
         if (booking.status === "cancelled") {
-            console.log(`[cancelBooking] Booking ${bookingId} already cancelled — no-op.`);
             return res.json({ success: true, message: "Booking is already cancelled" });
         }
 
-        // ── 4. Cancel ────────────────────────────────────────────────────────
         await prisma.booking.update({
             where: { id: bookingId },
             data: { status: "cancelled" },
         });
 
-        console.log(`[cancelBooking] Booking ${bookingId} cancelled by user ${requesterId}.`);
         return res.json({ success: true, message: "Booking cancelled" });
 
     } catch (error) {
-        console.error("[cancelBooking] Unexpected error:", error);
+        console.error("[cancelBooking] error:", error);
         return res.status(500).json({ success: false, message: "Server error" });
     }
 };
