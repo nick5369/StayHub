@@ -197,10 +197,16 @@ UserRole:
   admin       -- reserved, no admin routes yet
   hotelOwner  -- promoted after hotel registration
 
+PaymentMethod:
+  PAY_AT_HOTEL
+  STRIPE
+
 BookingStatus:
-  pending     -- default
+  pending
+  payment_pending
   confirmed
   cancelled
+  refunded
 ```
 
 ### Model: User
@@ -217,6 +223,9 @@ BookingStatus:
 | `otp` | String? | bcrypt hash of 6-digit OTP (nullable) |
 | `otpExpiry` | DateTime? | OTP expiry (10 min from send) |
 | `recentSearchedCities` | String[] | Last 3 searched cities (FIFO, max 3) |
+| `firstName` | String? | Guest first name (collected for booking) |
+| `lastName` | String? | Guest last name |
+| `phone` | String? | Guest contact number |
 | `createdAt` | DateTime | Auto-set |
 | `updatedAt` | DateTime | Auto-updated |
 | **Relations** | `hotels Hotel[]` | One user can own one hotel (enforced in app logic) |
@@ -234,23 +243,41 @@ BookingStatus:
 | `ownerId` | String | FK -> User.id |
 | `createdAt` / `updatedAt` | DateTime | Timestamps |
 | **Relations** | `owner User` | The owning user |
-| | `rooms Room[]` | All rooms under this hotel |
+| | `roomTypes RoomType[]` | Marketing data for rooms under this hotel |
+| | `rooms Room[]` | Physical inventory rooms under this hotel |
 | | `bookings Booking[]` | All bookings for this hotel |
 
-### Model: Room
+### Model: RoomType (Marketing Data)
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | String (UUID) | Primary key |
 | `hotelId` | String | FK -> Hotel.id |
-| `roomType` | String | e.g. Single Bed, Double Bed, Luxury Room, Family Suite |
-| `pricePerNight` | Float | Nightly rate in USD |
+| `name` | String | e.g. Single Bed, Double Bed, Luxury Suite |
+| `pricePerNight` | Decimal | Nightly rate in USD |
 | `amenities` | String[] | Array of amenity strings (e.g. ["Free WiFi", "Pool Access"]) |
 | `images` | String[] | Array of Cloudinary secure URLs (max 4) |
-| `isAvailable` | Boolean | Default true; toggled by hotel owner |
+| `maxGuests` | Int | Max guests accommodated (default: 2) |
+| `isAvailable` | Boolean | Default true; toggled by hotel owner to hide room type |
 | `createdAt` / `updatedAt` | DateTime | Timestamps |
 | **Relations** | `hotel Hotel` | Parent hotel |
-| | `bookings Booking[]` | All bookings for this room |
+| | `rooms Room[]` | Physical units of this room type |
+| | `bookings Booking[]` | Bookings made for this room type |
+
+### Model: Room (Physical Inventory)
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | String (UUID) | Primary key |
+| `roomTypeId` | String | FK -> RoomType.id |
+| `hotelId` | String | FK -> Hotel.id |
+| `roomNumber` | String | Internal physical unit number (e.g. "101") |
+| `isAvailable` | Boolean | Default true; unit-level availability |
+| `isUnderMaintenance` | Boolean | Default false |
+| `createdAt` / `updatedAt` | DateTime | Timestamps |
+| **Relations** | `roomType RoomType` | Parent room type |
+| | `hotel Hotel` | Parent hotel |
+| | `bookings Booking[]` | Bookings placed on this physical unit |
 
 ### Model: Booking
 
@@ -258,40 +285,46 @@ BookingStatus:
 |---|---|---|
 | `id` | String (UUID) | Primary key |
 | `userId` | String | FK -> User.id |
-| `roomId` | String | FK -> Room.id |
+| `roomId` | String | FK -> Room.id (physical room assigned) |
+| `roomTypeId` | String | FK -> RoomType.id (for display logic) |
 | `hotelId` | String | FK -> Hotel.id (denormalized for query efficiency) |
 | `checkInDate` | DateTime | Check-in date |
 | `checkOutDate` | DateTime | Check-out date |
-| `totalPrice` | Float | pricePerNight x numberOfNights |
+| `totalPrice` | Decimal | pricePerNight x numberOfNights |
 | `guests` | Int | Number of guests |
 | `status` | BookingStatus | Default: pending |
-| `paymentMethod` | String | Default: "Pay At Hotel"; becomes "Stripe" after webhook |
+| `paymentMethod` | PaymentMethod | Default: PAY_AT_HOTEL |
 | `isPaid` | Boolean | Default false; set to true by Stripe webhook |
+| `stripeSessionId` | String? | Stripe session ID |
+| `stripePaymentIntent`| String? | Stripe payment intent |
+| `expiresAt` | DateTime? | Expiry time for payment holds |
 | `createdAt` / `updatedAt` | DateTime | Timestamps |
 | **Relations** | `user User` | Guest who booked |
-| | `room Room` | The booked room |
+| | `room Room` | The physical room booked |
+| | `roomType RoomType` | The room type |
 | | `hotel Hotel` | The hotel |
 
 ### Entity Relationships
 
 ```
-User ─────────── Hotel ──────────── Room
-  |  (ownerId)        |  (hotelId)       |  (roomId)
-  |                   |                  |
-  └───────────── Booking ────────────────┘
-       (userId)   (hotelId)   (roomId)
+User ─────────── Hotel ─────────── RoomType ──────── Room
+  |  (ownerId)        |  (hotelId)        | (roomTypeId)
+  |                   |                   |
+  |                   |                   | (roomId)
+  └───────────── Booking ─────────────────┴──────────┘
+       (userId)   (hotelId)  (roomTypeId)
 ```
 
 ### Overlap Prevention Logic
 
-Bookings are prevented from overlapping at the **application layer** inside `checkAvailability()`:
+Bookings are prevented from overlapping at the **application layer** inside `checkAvailability()`, which searches for a free physical room (Room) of the requested RoomType by checking:
 
 ```
 existingCheckIn  <= newCheckOut   AND
 existingCheckOut >= newCheckIn
 ```
 
-A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as an optional DB-level upgrade.
+Concurrent bookings are guarded by a `SELECT ... FOR UPDATE` row-level lock on the chosen physical room inside an interactive transaction. A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as an optional DB-level upgrade.
 
 ---
 
@@ -520,74 +553,75 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
 
 #### createRoom — POST /api/rooms
 
-**Body:** multipart/form-data with fields: roomType, pricePerNight, amenities (JSON string), images (up to 4 files)
+**Body:** multipart/form-data with fields: name, pricePerNight, amenities (JSON string), maxGuests (int), quantity (int), images (up to 4 files)
 
 **Business Logic:**
 1. Finds the authenticated user's hotel.
 2. Uploads each image file in req.files to Cloudinary; collects secure_url array.
-3. Normalizes amenities input (may arrive as JSON string, array, or object from FormData):
-   - JSON string -> parsed to array or object.
-   - Object { "Free WiFi": true, "Pool": false } -> keys with truthy values.
-   - Comma-separated string -> split + trim.
-4. Creates Room record with hotelId, roomType, pricePerNight, amenities[], images[].
+3. Normalizes amenities input (JSON string, array, or object).
+4. Determines highest existing room number to assign sequential numbers to new units.
+5. In a single transaction:
+   - Creates a `RoomType` record (marketing data).
+   - Bulk-creates `quantity` physical `Room` records associated with this RoomType.
 
 #### getRooms — GET /api/rooms
 
-- Returns all rooms where isAvailable: true, ordered by createdAt DESC.
-- Each room includes nested hotel with nested owner (only id, image, username).
+- Returns all RoomTypes where `isAvailable: true` and at least one physical room is available and not under maintenance.
+- Each RoomType includes nested hotel with nested owner, and a count of available physical units.
+- Normalizes output to match frontend contract (returns `RoomType` as `room`).
 
 #### getOwnerRooms — GET /api/rooms/owner
 
-- Finds the authenticated user's hotel; returns all rooms for that hotel (including hotel data).
-- Does NOT filter by isAvailable — shows all rooms including unavailable ones.
+- Finds the authenticated user's hotel; returns all `RoomType`s for that hotel.
+- Includes physical rooms so owner can see individual unit status.
 
 #### toggleRoomAvailability — POST /api/rooms/toggle-availability
 
-**Body:** { roomId }
+**Body:** { roomId } (Note: refers to RoomType.id)
 
-- Reads current isAvailable value; flips it to the opposite.
+- Flips the `isAvailable` flag on a RoomType (gates all its physical rooms).
 - Returns { success: true, message: "Room availability updated" }.
 
 ---
 
 ### bookingController.js
 
-#### checkAvailability (helper function, not exported as route)
+#### checkAvailability (helper function)
 
-- Queries for any booking on the same roomId where:
+- Queries for any active booking on physical rooms of the specified `roomTypeId` where:
   checkInDate <= newCheckOut AND checkOutDate >= newCheckIn
-- Returns true if no overlap found; false otherwise.
+- Returns `true` if at least one physical room is free; `false` otherwise.
 
 #### checkAvailabilityApi — POST /api/bookings/check-availability
 
-**Body:** { checkInDate, checkOutDate, room }
+**Body:** { roomTypeId, checkInDate, checkOutDate }
 
 - Wraps the helper and returns { success: true, isAvailable: boolean }.
 
 #### createBooking — POST /api/bookings/book
 
-**Body:** { room (roomId), checkInDate, checkOutDate, guests }
+**Body:** { roomTypeId, checkInDate, checkOutDate, guests }
 
 **Business Logic:**
-1. Loads room + hotel via prisma.room.findUnique with include hotel.
-2. Calculates numberOfNights = ceil(|checkOut - checkIn| / 86400000).
-3. Calculates totalPrice = pricePerNight x numberOfNights.
-4. Uses an interactive transaction (`prisma.$transaction`) with a row-level lock on the room (`SELECT ... FOR UPDATE`) to prevent concurrent double-booking.
-5. Within the transaction, validates availability against overlapping bookings; if not available -> 400.
-6. Creates the Booking record.
-7. Sends booking confirmation email to req.user.email with booking details (ID, hotel name, address, date, amount).
+1. Cancels expired `payment_pending` bookings for this roomTypeId (lazy evaluation).
+2. Loads RoomType for price and `maxGuests` validation (ensures guests <= maxGuests).
+3. Finds a free physical Room for the date range.
+4. Uses an interactive transaction (`prisma.$transaction`) with a row-level lock on the chosen physical Room (`SELECT ... FOR UPDATE`).
+5. Re-checks availability inside the lock.
+6. Creates the Booking record with status `payment_pending` and an `expiresAt` (15 mins from now).
+7. Sends booking confirmation email to req.user.email (outside transaction).
 
 #### getUserBookings — GET /api/bookings/user
 
-- Returns all bookings for req.user.id, newest first.
-- Each booking includes nested room and hotel data.
+- Returns all bookings for `req.user.id`, newest first.
+- Includes `room` (physical unit) and `roomType` (marketing data).
+- Normalizes output by attaching roomType data to the room object for frontend compatibility.
 
 #### getHotelBookings — GET /api/bookings/hotel
 
 - Finds authenticated user's hotel; returns all bookings for it.
-- Each booking includes nested room, hotel, and user data.
-- Computes totalBookings (count) and totalRevenue (sum of totalPrice).
-- Returns { success: true, dashboardData: { bookings, totalBookings, totalRevenue } }.
+- Includes nested room, roomType, hotel, and user data.
+- Computes `totalBookings` (count) and `totalRevenue` (sum of totalPrice).
 
 #### stripePayment — POST /api/bookings/stripe-payment
 
@@ -595,32 +629,16 @@ A PostgreSQL `EXCLUDE USING gist` constraint is documented in schema comments as
 
 **Business Logic:**
 1. Finds booking by bookingId.
-2. Loads room + hotel.
-3. Creates a Stripe Checkout Session with:
-   - Product name: hotel name.
-   - Amount: booking.totalPrice * 100 (in cents).
-   - success_url: {origin}/loader/my-bookings
-   - cancel_url: {origin}/my-bookings
-   - metadata.bookingId: UUID (used by webhook to update DB).
-4. Returns { success: true, url: session.url }.
+2. Creates a Stripe Checkout Session with product name, amount in cents.
+3. Sets `metadata.bookingId` for the webhook.
+4. Updates booking to `payment_pending` and extends `expiresAt` by 15 mins.
+5. Returns session URL.
 
 #### confirmBooking — POST /api/bookings/:bookingId/confirm
-
-**Business Logic:**
-1. Loads the booking and verifies it exists.
-2. Authorises the request (only the hotel owner can confirm).
-3. Idempotency guard: skips if already confirmed, errors if cancelled.
-4. Updates booking status to "confirmed".
-5. Returns { success: true, message: "Booking confirmed" }.
+- Owner-only: updates booking status to "confirmed".
 
 #### cancelBooking — POST /api/bookings/:bookingId/cancel
-
-**Business Logic:**
-1. Loads the booking and verifies it exists.
-2. Authorises the request (either the guest who booked or the hotel owner).
-3. Idempotency guard: skips if already cancelled.
-4. Updates booking status to "cancelled".
-5. Returns { success: true, message: "Booking cancelled" }.
+- Owner or Guest: updates booking status to "cancelled".
 
 ---
 
@@ -904,11 +922,11 @@ Detailed room view with image gallery and booking form.
 | `selectedImg` | String or null | Currently displayed large image URL |
 | `checkInDate` | String | ISO date string |
 | `checkOutDate` | String | ISO date string |
-| `guests` | Number | Default: 1 |
+| `guests` | Number | Default: 1. Validated against `room.maxGuests` |
 | `isAvailable` | Boolean | Whether availability has been confirmed |
 
 **Two-step booking UX:**
-1. First submit -> calls POST /api/bookings/check-availability -> if available, isAvailable = true.
+1. First submit -> calls POST /api/bookings/check-availability -> if available, isAvailable = true. (Also validates `guests` <= `room.maxGuests`).
 2. Second submit (button becomes "Book Now") -> calls POST /api/bookings/book.
 
 > NOTE: Hotel name in header uses hotelDummyData.name (static dummy) instead of room.hotel.name. Host section also uses userDummyData. Star rating is hardcoded.
@@ -931,7 +949,9 @@ User's booking history page.
 - Displays room image, room type, hotel name and address, guest count, dates.
 - Shows amenity icons.
 - Shows total price + paid/unpaid badge.
-- "Pay Now" button -> Stripe payment session -> redirects to Stripe checkout.
+- Shows dynamic status badges (Pending, Payment Pending, Confirmed, Cancelled, Refunded).
+- "Pay Now" button -> Stripe payment session -> redirects to Stripe checkout. (Hidden for cancelled bookings)
+- "Cancel" button -> calls POST /api/bookings/:id/cancel. (Hidden for already cancelled bookings)
 
 > NOTE: handlePayment function is declared but empty (dead code). handlePayNow is the real handler.
 
@@ -967,7 +987,7 @@ Hotel owner statistics overview.
 
 ### HotelOwner/Addroom.jsx
 
-Form to add a new room to the owner's hotel.
+Form to add a new room type to the owner's hotel.
 
 **Local State:**
 
@@ -975,13 +995,17 @@ Form to add a new room to the owner's hotel.
 |---|---|
 | isLoading | Submit button loading state |
 | Images | Object {1: File or null, 2: ..., 3: ..., 4: ...} — up to 4 image files |
-| Inputs.roomType | Selected room type |
+| Inputs.name | Selected room type display name |
 | Inputs.pricePerNight | Price input (string, converted to number on submit) |
+| Inputs.maxGuests | Max guests allowed per room (default: 2) |
+| Inputs.quantity | Number of physical units to create for this type (default: 1) |
 | Inputs.amenities | Object { "Free WiFi": bool, "Free Breakfast": bool, "Room Service": bool, "Mountain View": bool, "Pool Access": bool } |
 
 **Submission:** Sends multipart/form-data via POST /api/rooms:
-- roomType (string)
+- name (string)
 - pricePerNight (string)
+- maxGuests (number)
+- quantity (number)
 - amenities (JSON stringified object)
 - images (file array, up to 4)
 
@@ -992,7 +1016,7 @@ Form to add a new room to the owner's hotel.
 
 ### HotelOwner/ListRoom.jsx
 
-Table of all owner's rooms with availability toggle.
+Table of all owner's room types with availability toggle.
 
 **Local State:**
 
@@ -1001,7 +1025,7 @@ Table of all owner's rooms with availability toggle.
 | ownerRooms | Array from GET /api/rooms/owner |
 
 **Features:**
-- Displays: Room Type, Amenities (joined string), Price/night, toggle switch.
+- Displays: Room Type Name, Amenities (joined string), Max Guests, Units (physical room count), Price/night, toggle switch.
 - Toggle calls POST /api/rooms/toggle-availability { roomId } then re-fetches.
 - getAmenitiesDisplay() normalizes both array and object amenity formats.
 
@@ -1221,52 +1245,3 @@ All API responses are dynamically computed from the database. Key dynamic fields
 | 1 | server/scripts/ | Scripts directory exists but content not explored in this documentation |
 | 2 | Admin role | UserRole.admin exists in schema but no admin routes or UI exist |
 
----
-
-## 20. Future Improvements & Architectural Roadmap
-
-### 1. Implement an Inventory Architecture (Room vs. RoomType)
-*   **Current Flaw:** A `Room` currently acts as both the product sold and the physical room, causing data duplication if a hotel has multiple identical rooms and an inability to track the specific room assigned to a guest.
-*   **The Fix:** Split the model into two.
-    *   `RoomType` model: Stores marketing data (name, description, pricePerNight, maxGuests, amenities, images).
-    *   `Room` model: Represents physical inventory (roomNumber, roomTypeId, hotelId, isUnderMaintenance).
-*   **Extended Detail:** This enables better revenue management (e.g., dynamic pricing on RoomType), simplifies updates to room descriptions across the entire hotel, and allows receptionists to manage physical assignments and maintenance statuses for specific doors without affecting the booking availability of the general `RoomType`.
-
-### 2. Remove the 1:1 Hotel Ownership Limit
-*   **Current Flaw:** The `@@unique([ownerId])` constraint on the Hotel model restricts owners to a single property.
-*   **The Fix:** Remove the unique constraint to establish a 1-to-Many relationship.
-*   **Extended Detail:** This requires UI updates to the Owner Dashboard to allow selecting which hotel to view, aggregating revenue across all properties, or managing settings per property. It would significantly increase the platform's viability for hotel chains and property management companies.
-
-### 3. Prevent the "Ghost Booking" Trap
-*   **Current Flaw:** Initiating a Stripe checkout creates a pending booking that permanently blocks the calendar, even if the user never pays.
-*   **The Fix:** Introduce an `expiresAt` DateTime field on pending bookings (e.g., now() + 15 mins). A cron job or lazy evaluation script should automatically cancel unpaid, expired bookings.
-*   **Extended Detail:** To ensure robust availability logic, modify the `checkAvailability` query to ignore pending bookings where `expiresAt` has passed. This avoids the necessity of a rigid background worker (like Redis/Bull) by enforcing the expiration logic directly in the availability validation step.
-
-### 4. Ensure Financial Traceability for Refunds
-*   **Current Flaw:** Without specific Stripe identifiers saved on the booking, the system cannot programmatically process refunds or resolve disputes automatically.
-*   **The Fix:** Add `stripeSessionId String? @unique` and `stripePaymentIntent String? @unique` to the Booking model.
-*   **Extended Detail:** Upon cancellation, the backend can retrieve the `stripePaymentIntent` and invoke `stripe.refunds.create()`. This also assists in reconciliation reports for the hotel owner, tying exact DB records to Stripe ledger entries.
-
-### 5. Enforce Strict Payment Types
-*   **Current Flaw:** `paymentMethod` is an unconstrained String. Typographical errors can break webhook processing and frontend display logic.
-*   **The Fix:** Define a Prisma enum: `enum PaymentMethod { PAY_AT_HOTEL, STRIPE }`.
-*   **Extended Detail:** Utilizing enums ensures compile-time safety and prevents rogue data from being inserted. It simplifies downstream analytics and UI conditional rendering by strictly guaranteeing one of the allowed payment flows.
-
-### 6. Expand the Booking State Machine
-*   **Current Flaw:** The `pending`, `confirmed`, and `cancelled` statuses lack the nuance required for a real hotel checkout flow.
-*   **The Fix:** Enhance `BookingStatus` to include `payment_pending`, `pending_approval`, `checked_in`, `checked_out`, and `refunded`.
-*   **Extended Detail:** 
-    *   `payment_pending`: Ensures dates are held temporarily while at Stripe checkout.
-    *   `pending_approval`: Useful if the owner needs to manually review "Pay At Hotel" requests.
-    *   `checked_in`/`checked_out`: Allows the dashboard to function as a true Property Management System (PMS) by tracking guests physically present.
-    *   `refunded`: Distinct from cancelled, clarifying the financial state.
-
-### 7. Optimize Database Race Condition Shields
-*   **Current Flaw:** Application-level `SELECT ... FOR UPDATE` locks are often too coarse, slowing down concurrent bookings for completely different date ranges.
-*   **The Fix:** Rely primarily on the PostgreSQL `btree_gist` exclusion constraint but enhance it with a `WHERE` clause (e.g., `WHERE status IN ('payment_pending', 'pending_approval', 'confirmed', 'checked_in')`).
-*   **Extended Detail:** This partial index constraint ensures that cancelled or expired holds do not trigger overlap errors. It moves the complex concurrency checks directly into the database engine, offering significantly better throughput than row-level application locking while maintaining absolute safety.
-
-### 8. Add Essential Guest Auditing
-*   **Current Flaw:** The system lacks vital guest contact information, making it legally non-compliant for hotel check-ins.
-*   **The Fix:** Add `firstName`, `lastName`, and `phone` to the `User` model, and `maxGuests` to the `RoomType` model.
-*   **Extended Detail:** This enables comprehensive booking manifests. The frontend check-out process should mandate these details, and the backend should validate guest counts against the `RoomType.maxGuests` threshold before allowing a reservation.
