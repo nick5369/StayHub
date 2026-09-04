@@ -331,12 +331,6 @@ export const getUserBookings = async (req, res) => {
         const bookings = await prisma.booking.findMany({
             where: { userId },
             include: {
-                room: {
-                    select: {
-                        id: true,
-                        roomNumber: true, // for internal reference only
-                    },
-                },
                 roomType: {
                     select: {
                         id: true,
@@ -357,7 +351,6 @@ export const getUserBookings = async (req, res) => {
         const normalized = bookings.map(b => ({
             ...b,
             room: {
-                ...b.room,
                 roomType: b.roomType.name,      // string e.g. "Luxury Suite"
                 images: b.roomType.images,
                 amenities: b.roomType.amenities,
@@ -392,9 +385,6 @@ export const getHotelBookings = async (req, res) => {
         const bookings = await prisma.booking.findMany({
             where: { hotelId: hotel.id },
             include: {
-                room: {
-                    select: { id: true, roomNumber: true },
-                },
                 roomType: {
                     select: { id: true, name: true, pricePerNight: true },
                 },
@@ -409,7 +399,6 @@ export const getHotelBookings = async (req, res) => {
         const normalized = bookings.map(b => ({
             ...b,
             room: {
-                ...b.room,
                 roomType: b.roomType.name,
             },
         }));
