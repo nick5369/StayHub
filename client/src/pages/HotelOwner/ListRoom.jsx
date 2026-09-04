@@ -90,7 +90,7 @@ const ListRoom = () => {
                   {getAmenitiesDisplay(room.amenities)}
                 </td>
                 <td className="p-3 text-center align-middle">{room.maxGuests}</td>
-                <td className="p-3 text-center align-middle">{room.rooms?.length || 0}</td>
+                <td className="p-3 text-center align-middle">{room.totalRooms ?? 0}</td>
                 <td className="p-3 text-center align-middle">
                   {currency} {Number(room.pricePerNight).toFixed(2)}
                 </td>

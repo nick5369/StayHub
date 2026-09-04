@@ -206,7 +206,24 @@ export const getOwnerRooms = async (req, res) => {
             orderBy: { createdAt: 'desc' },
         });
 
-        return res.json({ success: true, rooms: roomTypes });
+        // Normalize: expose totalRooms from today's inventory row instead of the
+        // raw Prisma object (which no longer has a physical rooms[] relation).
+        const normalized = roomTypes.map(rt => {
+            const todayInv = rt.inventory[0];
+            return {
+                id:            rt.id,
+                name:          rt.name,
+                pricePerNight: rt.pricePerNight,
+                amenities:     rt.amenities,
+                images:        rt.images,
+                maxGuests:     rt.maxGuests,
+                isAvailable:   rt.isAvailable,
+                totalRooms:    todayInv ? todayInv.totalRooms : 0,   // units from inventory
+                createdAt:     rt.createdAt,
+            };
+        });
+
+        return res.json({ success: true, rooms: normalized });
 
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });

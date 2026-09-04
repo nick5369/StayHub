@@ -162,9 +162,9 @@ const Addroom = () => {
 
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">
-            Number of Rooms{" "}
+            Daily Available Inventory{" "}
             <span className="text-xs font-normal text-gray-500">
-              (total units of this type in the hotel)
+              (rooms available to book per day)
             </span>
           </label>
           <input
@@ -178,7 +178,7 @@ const Addroom = () => {
             required
           />
           <p className="text-xs text-gray-400 mt-1">
-            e.g. enter 5 if you have 5 identical Luxury Rooms
+            e.g. enter 5 if up to 5 guests can book this room type on the same day
           </p>
         </div>
       </div>
