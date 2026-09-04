@@ -9,9 +9,11 @@ import hotelRouter from "./routes/hotelRoutes.js";
 import roomRouter from "./routes/roomRoutes.js";
 import bookingRouter from "./routes/bookingRoutes.js";
 import { stripeWebhooks } from "./controllers/stripeWebhooks.js";
+import { startInventoryCron } from "./scripts/generateInventory.js";
 
 // Prisma connects lazily on first query — no explicit connect call needed.
 connectCloudinary();
+startInventoryCron();
 
 const app = express();
 

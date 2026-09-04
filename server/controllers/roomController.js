@@ -71,18 +71,7 @@ export const createRoom = async (req, res) => {
         const qty = Math.max(1, parseInt(quantity, 10) || 1);
         const maxGuestsNum = Math.max(1, parseInt(maxGuests, 10) || 2);
 
-        // ── Find the highest existing room number for this hotel ──────────────
-        // so new rooms get unique sequential numbers across all room types.
-        const existingRooms = await prisma.room.findMany({
-            where: { hotelId: hotel.id },
-            select: { roomNumber: true },
-        });
-
-        // Parse existing numbers; default to 100 so first room = 101.
-        const existingNums = existingRooms.map(r => parseInt(r.roomNumber, 10)).filter(n => !isNaN(n));
-        const startNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 101;
-
-        // ── Create RoomType + physical Rooms in a single transaction ──────────
+        // ── Create RoomType + 365 Days of Inventory in a single transaction ───
         await prisma.$transaction(async (tx) => {
             const roomType = await tx.roomType.create({
                 data: {
@@ -95,14 +84,24 @@ export const createRoom = async (req, res) => {
                 },
             });
 
-            // Bulk-create N physical Room rows.
-            const roomData = Array.from({ length: qty }, (_, i) => ({
-                roomTypeId: roomType.id,
-                hotelId: hotel.id,
-                roomNumber: String(startNum + i),
-            }));
+            // Generate 365 days of inventory starting from today
+            const inventoryData = [];
+            const today = new Date();
+            today.setUTCHours(0, 0, 0, 0);
 
-            await tx.room.createMany({ data: roomData });
+            for (let i = 0; i < 365; i++) {
+                const date = new Date(today);
+                date.setUTCDate(today.getUTCDate() + i);
+                
+                inventoryData.push({
+                    roomTypeId: roomType.id,
+                    date: date,
+                    totalRooms: qty,
+                    bookedRooms: 0,
+                });
+            }
+
+            await tx.roomTypeInventory.createMany({ data: inventoryData });
         });
 
         return res.json({ success: true, message: `Room type created with ${qty} unit(s)` });
@@ -124,13 +123,12 @@ export const createRoom = async (req, res) => {
 // ---------------------------------------------------------------------------
 export const getRooms = async (req, res) => {
     try {
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
         const roomTypes = await prisma.roomType.findMany({
             where: {
                 isAvailable: true,
-                // Only include types that have at least one physically available room.
-                rooms: {
-                    some: { isAvailable: true, isUnderMaintenance: false },
-                },
             },
             include: {
                 hotel: {
@@ -140,28 +138,35 @@ export const getRooms = async (req, res) => {
                         },
                     },
                 },
-                // Count available rooms for the listing badge.
-                rooms: {
-                    where: { isAvailable: true, isUnderMaintenance: false },
-                    select: { id: true },
+                // Fetch today's inventory to determine availability
+                inventory: {
+                    where: { date: today },
                 },
             },
             orderBy: { createdAt: 'desc' },
         });
 
-        // Normalize to match the shape the frontend already consumes.
-        const rooms = roomTypes.map(rt => ({
-            id: rt.id,                          // RoomType.id (= roomTypeId for bookings)
-            roomType: rt.name,                  // kept as "roomType" for backward compat
-            pricePerNight: rt.pricePerNight,
-            amenities: rt.amenities,
-            images: rt.images,
-            maxGuests: rt.maxGuests,            // NEW — Task 8
-            isAvailable: rt.isAvailable,
-            availableCount: rt.rooms.length,    // how many units are free
-            hotel: rt.hotel,
-            createdAt: rt.createdAt,
-        }));
+        // Normalize to match the shape the frontend already consumes,
+        // and filter out room types that have no availability today.
+        const rooms = roomTypes
+            .map(rt => {
+                const todayInv = rt.inventory[0];
+                const availableCount = todayInv ? todayInv.totalRooms - todayInv.bookedRooms : 0;
+                
+                return {
+                    id: rt.id,                          // RoomType.id (= roomTypeId for bookings)
+                    roomType: rt.name,                  // kept as "roomType" for backward compat
+                    pricePerNight: rt.pricePerNight,
+                    amenities: rt.amenities,
+                    images: rt.images,
+                    maxGuests: rt.maxGuests,            // NEW — Task 8
+                    isAvailable: rt.isAvailable,
+                    availableCount,                     // how many units are free today
+                    hotel: rt.hotel,
+                    createdAt: rt.createdAt,
+                };
+            })
+            .filter(rt => rt.availableCount > 0);
 
         return res.json({ success: true, rooms });
 
@@ -186,13 +191,16 @@ export const getOwnerRooms = async (req, res) => {
             return res.status(400).json({ success: false, message: "No hotel found" });
         }
 
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
         const roomTypes = await prisma.roomType.findMany({
             where: { hotelId: hotel.id },
             include: {
                 hotel: true,
-                // Include physical rooms so owner can see individual unit status.
-                rooms: {
-                    orderBy: { roomNumber: 'asc' },
+                // Include today's inventory so owner can see total unit count
+                inventory: {
+                    where: { date: today },
                 },
             },
             orderBy: { createdAt: 'desc' },
