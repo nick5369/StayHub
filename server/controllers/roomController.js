@@ -114,22 +114,40 @@ export const createRoom = async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // GET /api/rooms
-// Returns all available RoomTypes with at least one bookable physical Room.
-// Response is normalized to preserve the existing frontend contract:
-//   { id, roomType, pricePerNight, amenities, images, maxGuests,
-//     isAvailable, availableCount, hotel }
+// Returns all available RoomTypes that have at least 1 free room across
+// their entire future inventory window.
 //
-// NOTE: `id` here is RoomType.id — used as `roomTypeId` in booking requests.
+// availableCount = MIN(totalRooms - bookedRooms) over all future inventory
+// rows for each RoomType. This prevents a room type that's fully booked on
+// any upcoming night from appearing as available.
+//
+// Response shape: { id, roomType, pricePerNight, amenities, images, maxGuests,
+//                   isAvailable, availableCount, hotel }
+// NOTE: `id` is RoomType.id — used as `roomTypeId` in booking requests.
 // ---------------------------------------------------------------------------
 export const getRooms = async (req, res) => {
     try {
         const today = new Date();
         today.setUTCHours(0, 0, 0, 0);
 
+        // Aggregate the minimum free-room count across all future inventory
+        // rows per RoomType in a single query.
+        const inventoryStats = await prisma.$queryRaw`
+            SELECT
+                "roomTypeId",
+                MIN("totalRooms" - "bookedRooms")::int AS min_available
+            FROM "RoomTypeInventory"
+            WHERE date >= ${today}
+            GROUP BY "roomTypeId"
+        `;
+
+        // Build a fast lookup map: roomTypeId → minAvailable
+        const availabilityMap = new Map(
+            inventoryStats.map(row => [row.roomTypeId, row.min_available ?? 0])
+        );
+
         const roomTypes = await prisma.roomType.findMany({
-            where: {
-                isAvailable: true,
-            },
+            where: { isAvailable: true },
             include: {
                 hotel: {
                     include: {
@@ -138,32 +156,26 @@ export const getRooms = async (req, res) => {
                         },
                     },
                 },
-                // Fetch today's inventory to determine availability
-                inventory: {
-                    where: { date: today },
-                },
             },
             orderBy: { createdAt: 'desc' },
         });
 
-        // Normalize to match the shape the frontend already consumes,
-        // and filter out room types that have no availability today.
+        // Normalize and filter: only include room types with at least 1
+        // free room across their entire future inventory window.
         const rooms = roomTypes
             .map(rt => {
-                const todayInv = rt.inventory[0];
-                const availableCount = todayInv ? todayInv.totalRooms - todayInv.bookedRooms : 0;
-
+                const availableCount = availabilityMap.get(rt.id) ?? 0;
                 return {
-                    id: rt.id,                          // RoomType.id (= roomTypeId for bookings)
-                    roomType: rt.name,                  // kept as "roomType" for backward compat
+                    id:            rt.id,
+                    roomType:      rt.name,
                     pricePerNight: rt.pricePerNight,
-                    amenities: rt.amenities,
-                    images: rt.images,
-                    maxGuests: rt.maxGuests,            // NEW — Task 8
-                    isAvailable: rt.isAvailable,
-                    availableCount,                     // how many units are free today
-                    hotel: rt.hotel,
-                    createdAt: rt.createdAt,
+                    amenities:     rt.amenities,
+                    images:        rt.images,
+                    maxGuests:     rt.maxGuests,
+                    isAvailable:   rt.isAvailable,
+                    availableCount,
+                    hotel:         rt.hotel,
+                    createdAt:     rt.createdAt,
                 };
             })
             .filter(rt => rt.availableCount > 0);
@@ -175,6 +187,7 @@ export const getRooms = async (req, res) => {
         return res.status(500).json({ success: false, message: error.message });
     }
 };
+
 
 // ---------------------------------------------------------------------------
 // GET /api/rooms/owner
@@ -259,3 +272,90 @@ export const toggleRoomAvailability = async (req, res) => {
         return res.status(500).json({ success: false, message: error.message });
     }
 };
+
+// ---------------------------------------------------------------------------
+// POST /api/rooms/block-dates
+// Allows a hotel owner to mark a specific number of rooms as unavailable
+// for a given date range (e.g. maintenance, renovation).
+//
+// Body: { roomTypeId, startDate, endDate, unavailableRooms }
+//   roomTypeId       — RoomType.id to block
+//   startDate        — first blocked night (inclusive, "YYYY-MM-DD")
+//   endDate          — last blocked night (exclusive, "YYYY-MM-DD")
+//   unavailableRooms — number of rooms to block (must be >= 1)
+//
+// The endpoint increments bookedRooms by `unavailableRooms` for each
+// inventory row in the range, capped at totalRooms so it never goes negative
+// or exceeds capacity.
+// ---------------------------------------------------------------------------
+export const blockRoomDates = async (req, res) => {
+    try {
+        const { roomTypeId, startDate, endDate, unavailableRooms } = req.body;
+
+        if (!roomTypeId || !startDate || !endDate || !unavailableRooms) {
+            return res.status(400).json({
+                success: false,
+                message: "roomTypeId, startDate, endDate, and unavailableRooms are required",
+            });
+        }
+
+        const start = new Date(startDate);
+        start.setUTCHours(0, 0, 0, 0);
+
+        const end = new Date(endDate);
+        end.setUTCHours(0, 0, 0, 0);
+
+        if (start >= end) {
+            return res.status(400).json({
+                success: false,
+                message: "endDate must be after startDate",
+            });
+        }
+
+        const blockedRooms = Math.max(1, parseInt(unavailableRooms, 10) || 1);
+
+        // Verify the room type belongs to the authenticated owner's hotel.
+        const roomType = await prisma.roomType.findFirst({
+            where: {
+                id: roomTypeId,
+                hotel: { ownerId: req.user.id },
+            },
+            include: { inventory: { where: { date: start }, take: 1 } },
+        });
+
+        if (!roomType) {
+            return res.status(404).json({
+                success: false,
+                message: "Room type not found or you do not own this hotel",
+            });
+        }
+
+        // Check that blockedRooms does not exceed totalRooms for this type.
+        const sampleInv = roomType.inventory[0];
+        if (sampleInv && blockedRooms > sampleInv.totalRooms) {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot block more than the total ${sampleInv.totalRooms} room(s) for this type`,
+            });
+        }
+
+        // Increment bookedRooms, capped at totalRooms (LEAST prevents overflow).
+        const updatedCount = await prisma.$executeRaw`
+            UPDATE "RoomTypeInventory"
+            SET "bookedRooms" = LEAST("totalRooms", "bookedRooms" + ${blockedRooms})
+            WHERE "roomTypeId" = ${roomTypeId}
+              AND date >= ${start}
+              AND date <  ${end}
+        `;
+
+        return res.json({
+            success: true,
+            message: `Blocked ${blockedRooms} room(s) for ${updatedCount} night(s)`,
+            updatedNights: updatedCount,
+        });
+
+    } catch (error) {
+        console.error('blockRoomDates error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};

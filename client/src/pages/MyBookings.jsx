@@ -102,7 +102,7 @@ const MyBookings = () => {
                   <p className="text-gray-700 font-medium">{booking.hotel.name}</p>
                   <p className="text-gray-500 text-sm">{booking.hotel.address}</p>
                   <p className="text-gray-500 text-sm">
-                    Guests: <span className="font-medium">{booking.guests}</span> | Check-in:{" "}
+                    Rooms: <span className="font-medium">{booking.numberOfRooms ?? 1}</span> | Guests: <span className="font-medium">{booking.guests}</span> | Check-in:{" "}
                     <span className="font-medium">{new Date(booking.checkInDate).toLocaleDateString()}</span> | Check-out:{" "}
                     <span className="font-medium">{new Date(booking.checkOutDate).toLocaleDateString()}</span>
                   </p>

@@ -15,12 +15,10 @@ datasource db {
 
 enum UserRole {
   user
-  admin
   hotelOwner
 }
 
 enum PaymentMethod {
-  PAY_AT_HOTEL
   STRIPE
 }
 
@@ -161,12 +159,13 @@ model Booking {
   checkInDate  DateTime
   checkOutDate DateTime
 
-  totalPrice Decimal @db.Decimal(10, 2)
-  guests     Int
+  totalPrice    Decimal @db.Decimal(10, 2)
+  guests        Int
+  numberOfRooms Int     @default(1)
 
   status BookingStatus @default(pending)
 
-  paymentMethod PaymentMethod @default(PAY_AT_HOTEL)
+  paymentMethod PaymentMethod @default(STRIPE)
   isPaid        Boolean       @default(false)
 
   stripeSessionId     String?

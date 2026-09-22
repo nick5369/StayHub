@@ -22,13 +22,13 @@ function Footer() {
 
         {/* Social Links (optional) */}
         <div className="flex space-x-6 mt-4">
-          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
+          <a href="https://instagram.com/stayhub" target="_blank" rel="noreferrer" className="hover:text-white transition-colors text-sm">
             Instagram
           </a>
-          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
+          <a href="https://twitter.com/stayhub" target="_blank" rel="noreferrer" className="hover:text-white transition-colors text-sm">
             Twitter
           </a>
-          <a href="#" onClick={(e) => e.preventDefault()} aria-disabled="true" className="hover:text-white transition-colors text-sm">
+          <a href="https://facebook.com/stayhub" target="_blank" rel="noreferrer" className="hover:text-white transition-colors text-sm">
             Facebook
           </a>
         </div>

@@ -14,32 +14,32 @@ const AllHotels = () => {
   const checkIn = searchParams.get('checkIn');
   const checkOut = searchParams.get('checkOut');
   const guests = searchParams.get('guests');
+  const destination = searchParams.get('destination');
 
   const [availableRoomIds, setAvailableRoomIds] = useState(null);
   const [isFilteringAvailability, setIsFilteringAvailability] = useState(false);
 
   useEffect(() => {
     const checkAvailability = async () => {
-      if (checkIn && checkOut && rooms.length > 0) {
+      if (checkIn && checkOut) {
         setIsFilteringAvailability(true);
         try {
-          const availabilityPromises = rooms.map(async (room) => {
-            try {
-              const { data } = await axios.post('/api/bookings/check-availability', {
-                room: room.id,
-                checkInDate: checkIn,
-                checkOutDate: checkOut
-              });
-              return { id: room.id, isAvailable: data.success && data.isAvailable };
-            } catch (err) {
-              return { id: room.id, isAvailable: false };
-            }
+          const { data } = await axios.post('/api/bookings/check-availability', {
+            checkInDate: checkIn,
+            checkOutDate: checkOut,
+            guests: guests || undefined,
+            destination: destination || undefined
           });
-          const results = await Promise.all(availabilityPromises);
-          const availableIds = results.filter(r => r.isAvailable).map(r => r.id);
-          setAvailableRoomIds(availableIds);
+          
+          if (data.success && Array.isArray(data.results)) {
+             const availableIds = data.results.map(r => r.id);
+             setAvailableRoomIds(availableIds);
+          } else {
+             setAvailableRoomIds([]);
+          }
         } catch (error) {
           console.error("Error checking availability", error);
+          setAvailableRoomIds([]);
         } finally {
           setIsFilteringAvailability(false);
         }
@@ -48,7 +48,7 @@ const AllHotels = () => {
       }
     };
     checkAvailability();
-  }, [checkIn, checkOut, rooms, axios]);
+  }, [checkIn, checkOut, guests, destination, axios]);
 
   // store selected room type strings, e.g. ["Single Bed", "Luxury Room"]
   const [popularFilters, setPopularFilters] = useState([]);
@@ -66,35 +66,40 @@ const AllHotels = () => {
     setSortBy("");
   };
 
-  const filterDestination = (room)=>{
+  const filterDestination = (room) => {
     const destination = searchParams.get("destination");
-    if(!destination) return true;
+    if (!destination) return true;
+    
+    const dest = destination.toLowerCase();
     const city = String(room?.hotel?.city || '').toLowerCase();
-    return city.includes(destination.toLowerCase());
+    const address = String(room?.hotel?.address || '').toLowerCase();
+    const name = String(room?.hotel?.name || '').toLowerCase();
+    
+    return city.includes(dest) || address.includes(dest) || name.includes(dest);
   }
 
-  const matchesRoomType = (room) =>{
+  const matchesRoomType = (room) => {
     // if no type filters selected, every room matches
     if (!Array.isArray(popularFilters) || popularFilters.length === 0) return true;
     // compare against the roomType property used across the app
     return popularFilters.includes(room.roomType);
   }
 
-  const matchesPriceRange = (room) =>{
-    return priceRange.length === 0 || priceRange.some(range =>{
-      const [min,max] = range.split(' to ').map(Number);
+  const matchesPriceRange = (room) => {
+    return priceRange.length === 0 || priceRange.some(range => {
+      const [min, max] = range.split(' to ').map(Number);
       return Number(room.pricePerNight) >= min && Number(room.pricePerNight) <= max;
     });
   }
-  
-  const sortRooms = (a,b) =>{
-    if(sortBy === 'low'){
+
+  const sortRooms = (a, b) => {
+    if (sortBy === 'low') {
       return Number(a.pricePerNight) - Number(b.pricePerNight);
     }
-    else if(sortBy === 'high'){
+    else if (sortBy === 'high') {
       return Number(b.pricePerNight) - Number(a.pricePerNight);
     }
-    else if(sortBy === 'new'){
+    else if (sortBy === 'new') {
       return new Date(b.createdAt) - new Date(a.createdAt);
     }
     return 0;
@@ -102,7 +107,7 @@ const AllHotels = () => {
 
   const filterGuests = (room) => {
     if (!guests) return true;
-    if (room.capacity && room.capacity < Number(guests)) return false;
+    if (room.maxGuests && room.maxGuests < Number(guests)) return false;
     return true;
   };
 
@@ -111,9 +116,9 @@ const AllHotels = () => {
     return availableRoomIds.includes(room.id);
   };
 
-  const filteredRooms = useMemo(()=>{
-    return rooms.filter(room =>matchesRoomType(room) && matchesPriceRange(room) && filterDestination(room) && filterGuests(room) && filterAvailability(room)).sort(sortRooms);
-  },[rooms, popularFilters, priceRange, sortBy, searchParams, availableRoomIds]);
+  const filteredRooms = useMemo(() => {
+    return rooms.filter(room => matchesRoomType(room) && matchesPriceRange(room) && filterDestination(room) && filterGuests(room) && filterAvailability(room)).sort(sortRooms);
+  }, [rooms, popularFilters, priceRange, sortBy, searchParams, availableRoomIds]);
 
 
 

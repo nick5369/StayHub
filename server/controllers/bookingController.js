@@ -1,32 +1,36 @@
 // controllers/bookingController.js
 //
-// Phase 3 — Booking Engine Transformation (Inventory Architecture).
+// Phase 4 — Multi-Room Booking + Inventory Integrity
 //
-// Key changes:
-//  • checkAvailability queries RoomTypeInventory to verify (totalRooms - bookedRooms) > 0
-//    for every day in the requested date range. No physical Room lookups.
-//  • createBooking uses an atomic updateMany on RoomTypeInventory to increment
-//    bookedRooms by 1, guarded by a WHERE bookedRooms < totalRooms condition.
-//    No SELECT ... FOR UPDATE row lock needed.
-//  • Guest count validation: guests must not exceed roomType.maxGuests.
-//  • getUserBookings / getHotelBookings include roomType nested data for display.
+// Key changes from Phase 3:
+//  • checkAvailability now accepts `numberOfRooms` and checks
+//    (totalRooms - bookedRooms) >= numberOfRooms for every night.
+//    Returns { isAvailable, availableRooms } instead of a bare boolean.
+//  • createBooking accepts `numberOfRooms` (default 1).
+//  • Step 1 (expired booking cleanup): fetches each expired booking's date
+//    range and numberOfRooms BEFORE cancelling and decrements bookedRooms
+//    correctly — fixing the inventory leak.
+//  • Step 5 (atomic increment): increments by numberOfRooms, guards with
+//    (totalRooms - bookedRooms) >= numberOfRooms. The manual fallback
+//    decrement block has been REMOVED — Prisma's $transaction rolls back
+//    partial changes automatically when RoomUnavailableError is thrown.
+//  • PAY_AT_HOTEL removed — STRIPE is the only payment method.
 
 import prisma from "../configs/db.js";
 import transporter from "../configs/nodemailer.js";
 import stripe from "stripe";
+import { Prisma } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
-// Helper: check if a RoomType has inventory available for every night in range.
+// Helper: check availability for a given numberOfRooms across the date range.
 //
-// Queries RoomTypeInventory: counts rows where (totalRooms - bookedRooms) > 0
-// for the given date range. If that count equals the number of requested nights,
-// the room type is fully available.
-//
-// Returns boolean.
+// Returns { isAvailable: boolean, availableRooms: number }
+//   isAvailable  — true only if ALL nights have >= numberOfRooms free.
+//   availableRooms — the minimum free slots across any single night in range
+//                    (useful for the "only X rooms available" prompt).
 // ---------------------------------------------------------------------------
-export const checkAvailability = async ({ checkInDate, checkOutDate, roomTypeId }) => {
+export const checkAvailability = async ({ checkInDate, checkOutDate, roomTypeId, numberOfRooms = 1 }) => {
     try {
-        // Normalise to UTC midnight (Date-only — matches the @db.Date column)
         const inDate = new Date(checkInDate);
         inDate.setUTCHours(0, 0, 0, 0);
 
@@ -36,37 +40,48 @@ export const checkAvailability = async ({ checkInDate, checkOutDate, roomTypeId 
         const timeDiff = outDate.getTime() - inDate.getTime();
         const numberOfNights = Math.round(timeDiff / (1000 * 3600 * 24));
 
-        if (numberOfNights <= 0) return false;
+        if (numberOfNights <= 0) return { isAvailable: false, availableRooms: 0 };
 
-        // Count inventory rows that still have capacity for the requested range.
-        // Uses raw SQL because Prisma does not support column-to-column comparisons
-        // in `where` clauses (e.g. bookedRooms < totalRooms).
+        const numRooms = Math.max(1, parseInt(numberOfRooms, 10) || 1);
+
+        // Fetch min free slots across all nights in the range.
+        // We use raw SQL because Prisma does not support column-to-column
+        // comparisons in where clauses.
         const result = await prisma.$queryRaw`
-            SELECT COUNT(*)::int AS available_nights
+            SELECT
+                COUNT(*)::int                                           AS total_nights,
+                COALESCE(MIN("totalRooms" - "bookedRooms"), 0)::int    AS min_available
             FROM "RoomTypeInventory"
             WHERE "roomTypeId" = ${roomTypeId}
               AND date >= ${inDate}
-              AND date < ${outDate}
-              AND "bookedRooms" < "totalRooms"
+              AND date <  ${outDate}
         `;
 
-        const availableNights = result[0]?.available_nights ?? 0;
-        return availableNights === numberOfNights;
+        const totalNights   = result[0]?.total_nights  ?? 0;
+        const minAvailable  = result[0]?.min_available ?? 0;
+
+        // Inventory rows must exist for every requested night.
+        if (totalNights !== numberOfNights) {
+            return { isAvailable: false, availableRooms: 0 };
+        }
+
+        const isAvailable = minAvailable >= numRooms;
+        return { isAvailable, availableRooms: minAvailable };
 
     } catch (error) {
         console.error('checkAvailability error:', error.message);
-        return false;
+        return { isAvailable: false, availableRooms: 0 };
     }
 };
 
 // ---------------------------------------------------------------------------
 // POST /api/bookings/check-availability
-// Body: { roomTypeId, checkInDate, checkOutDate }
-// Response: { success, isAvailable }
+// Body: { roomTypeId, checkInDate, checkOutDate, numberOfRooms? }
+// Response: { success, isAvailable, availableRooms }
 // ---------------------------------------------------------------------------
 export const checkAvailabilityApi = async (req, res) => {
     try {
-        const { roomTypeId, checkInDate, checkOutDate } = req.body;
+        const { roomTypeId, checkInDate, checkOutDate, numberOfRooms = 1, destination, guests } = req.body;
 
         if (!checkInDate || !checkOutDate) {
             return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
@@ -75,10 +90,87 @@ export const checkAvailabilityApi = async (req, res) => {
             return res.status(400).json({ success: false, message: "Check-out date must be after check-in date" });
         }
 
-        const isAvailable = await checkAvailability({ checkInDate, checkOutDate, roomTypeId });
-        return res.json({ success: true, isAvailable });
+        // If specific roomTypeId is provided, use the existing single-room logic
+        if (roomTypeId) {
+            const { isAvailable, availableRooms } = await checkAvailability({
+                checkInDate,
+                checkOutDate,
+                roomTypeId,
+                numberOfRooms,
+            });
+            return res.json({ success: true, isAvailable, availableRooms });
+        }
+
+        // Batch search logic
+        const inDate = new Date(checkInDate);
+        inDate.setUTCHours(0, 0, 0, 0);
+
+        const outDate = new Date(checkOutDate);
+        outDate.setUTCHours(0, 0, 0, 0);
+
+        const timeDiff = outDate.getTime() - inDate.getTime();
+        const numberOfNights = Math.round(timeDiff / (1000 * 3600 * 24));
+
+        if (numberOfNights <= 0) return res.json({ success: true, results: [] });
+
+        const numRooms = Math.max(1, parseInt(numberOfRooms, 10) || 1);
+
+        // 1. Build filtering for roomTypes
+        let roomTypeWhere = { isAvailable: true };
+        if (guests) {
+            roomTypeWhere.maxGuests = { gte: parseInt(guests, 10) };
+        }
+        if (destination) {
+            roomTypeWhere.hotel = {
+                OR: [
+                    { city: { contains: destination, mode: 'insensitive' } },
+                    { address: { contains: destination, mode: 'insensitive' } },
+                    { name: { contains: destination, mode: 'insensitive' } }
+                ]
+            };
+        }
+
+        console.log("[checkAvailabilityApi] Batch Search - Where Clause:", JSON.stringify(roomTypeWhere, null, 2));
+
+        const roomTypes = await prisma.roomType.findMany({
+            where: roomTypeWhere,
+            select: { id: true }
+        });
+
+        console.log(`[checkAvailabilityApi] Found ${roomTypes.length} matching room types before inventory check.`);
+
+        if (roomTypes.length === 0) {
+            return res.json({ success: true, results: [] });
+        }
+
+        const roomTypeIds = roomTypes.map(rt => rt.id);
+
+        // 2. Single raw query to check inventory for all matching rooms
+        const inventoryStats = await prisma.$queryRaw`
+            SELECT
+                "roomTypeId",
+                COUNT(*)::int                                           AS total_nights,
+                COALESCE(MIN("totalRooms" - "bookedRooms"), 0)::int    AS min_available
+            FROM "RoomTypeInventory"
+            WHERE "roomTypeId" IN (${Prisma.join(roomTypeIds)})
+              AND date >= ${inDate}
+              AND date <  ${outDate}
+            GROUP BY "roomTypeId"
+        `;
+
+        // 3. Process results
+        const results = inventoryStats.map(stat => ({
+            id: stat.roomTypeId,
+            isAvailable: stat.total_nights === numberOfNights && stat.min_available >= numRooms,
+            availableRooms: stat.min_available
+        })).filter(r => r.isAvailable);
+
+        console.log(`[checkAvailabilityApi] Returning ${results.length} available room types.`);
+        
+        return res.json({ success: true, results });
 
     } catch (error) {
+        console.error('checkAvailabilityApi error:', error);
         return res.json({ success: false, message: error.message });
     }
 };
@@ -87,30 +179,34 @@ export const checkAvailabilityApi = async (req, res) => {
 // Sentinel error thrown when inventory cannot be atomically reserved.
 // ---------------------------------------------------------------------------
 class RoomUnavailableError extends Error {
-    constructor() {
-        super("Room is no longer available for the selected dates.");
+    constructor(availableRooms = 0) {
+        super("Rooms are no longer available for the selected dates.");
         this.name = "RoomUnavailableError";
+        this.availableRooms = availableRooms;
     }
 }
 
 // ---------------------------------------------------------------------------
 // POST /api/bookings/book  (createBooking)
 //
-// Body: { roomTypeId, checkInDate, checkOutDate, guests }
+// Body: { roomTypeId, checkInDate, checkOutDate, guests, numberOfRooms? }
 //
 // Concurrency strategy — atomic inventory counter:
-//  1. Cancel expired payment_pending bookings for this roomTypeId (lazy eval).
+//  1. Cancel expired payment_pending bookings for this roomTypeId.
+//     BEFORE cancelling: fetch their dates + numberOfRooms and decrement
+//     bookedRooms for those date ranges (inventory leak fix).
 //  2. Load RoomType for price + maxGuests validation.
-//  3. Validate guest count <= roomType.maxGuests.
-//  4. Compute number of nights.
+//  3. Validate guests <= roomType.maxGuests * numberOfRooms.
+//  4. Compute total price = pricePerNight * numberOfNights * numberOfRooms.
 //  5. Atomic updateMany on RoomTypeInventory:
-//       WHERE date IN range AND bookedRooms < totalRooms
-//       SET bookedRooms += 1
-//     If updatedCount !== numberOfNights → undo increments + throw RoomUnavailableError.
-//  6. Create Booking record (no roomId — physical rooms no longer tracked).
+//       WHERE date IN range AND (totalRooms - bookedRooms) >= numberOfRooms
+//       SET bookedRooms += numberOfRooms
+//     If updatedCount !== numberOfNights → throw RoomUnavailableError.
+//     (No manual rollback — Prisma $transaction handles it automatically.)
+//  6. Create Booking record with numberOfRooms stored.
 // ---------------------------------------------------------------------------
 export const createBooking = async (req, res) => {
-    const { roomTypeId, checkInDate, checkOutDate, guests } = req.body;
+    const { roomTypeId, checkInDate, checkOutDate, guests, numberOfRooms = 1 } = req.body;
 
     if (!checkInDate || !checkOutDate) {
         return res.status(400).json({ success: false, message: "Check-in and check-out dates are required" });
@@ -129,6 +225,7 @@ export const createBooking = async (req, res) => {
 
     const timeDiff = outDate.getTime() - inDate.getTime();
     const numberOfNights = Math.round(timeDiff / (1000 * 3600 * 24));
+    const numRooms = Math.max(1, parseInt(numberOfRooms, 10) || 1);
 
     const userId = req.user.id;
     let booking;
@@ -137,15 +234,47 @@ export const createBooking = async (req, res) => {
     try {
         ({ booking, roomTypeData } = await prisma.$transaction(async (tx) => {
 
-            // ── 1. Cancel expired payment_pending bookings for this roomTypeId ────
-            await tx.booking.updateMany({
+            // ── 1. Fix inventory leak: release rooms from expired bookings ─────
+            // Fetch expired payment_pending bookings for this roomType BEFORE
+            // cancelling them, so we can decrement bookedRooms for each one.
+            const expiredBookings = await tx.booking.findMany({
                 where: {
                     roomTypeId,
                     status: 'payment_pending',
                     expiresAt: { lte: new Date() },
                 },
-                data: { status: 'cancelled' },
+                select: {
+                    id: true,
+                    checkInDate: true,
+                    checkOutDate: true,
+                    numberOfRooms: true,
+                },
             });
+
+            // Release inventory for each expired booking before cancelling.
+            for (const expiredBooking of expiredBookings) {
+                const expIn  = new Date(expiredBooking.checkInDate);
+                const expOut = new Date(expiredBooking.checkOutDate);
+                const expRooms = expiredBooking.numberOfRooms ?? 1;
+
+                await tx.$executeRaw`
+                    UPDATE "RoomTypeInventory"
+                    SET "bookedRooms" = GREATEST(0, "bookedRooms" - ${expRooms})
+                    WHERE "roomTypeId" = ${roomTypeId}
+                      AND date >= ${expIn}
+                      AND date <  ${expOut}
+                `;
+            }
+
+            // Now cancel all expired bookings for this roomType.
+            if (expiredBookings.length > 0) {
+                await tx.booking.updateMany({
+                    where: {
+                        id: { in: expiredBookings.map(b => b.id) },
+                    },
+                    data: { status: 'cancelled' },
+                });
+            }
 
             // ── 2. Load the RoomType for price + maxGuests validation ────────────
             const txRoomType = await tx.roomType.findUnique({
@@ -157,46 +286,45 @@ export const createBooking = async (req, res) => {
                 throw Object.assign(new Error("Room type not found"), { status: 404 });
             }
 
-            // ── 3. Validate guest count ───────────────────────────────────────────
+            // ── 3. Validate guest count across all requested rooms ─────────────
             const guestCount = parseInt(guests, 10) || 1;
-            if (guestCount > txRoomType.maxGuests) {
+            const maxTotalGuests = txRoomType.maxGuests * numRooms;
+            if (guestCount > maxTotalGuests) {
                 throw Object.assign(
-                    new Error(`This room type accommodates a maximum of ${txRoomType.maxGuests} guests.`),
+                    new Error(`${numRooms} room(s) of this type accommodate a maximum of ${maxTotalGuests} guests (${txRoomType.maxGuests} per room).`),
                     { status: 400, isGuestError: true }
                 );
             }
 
             // ── 4. Compute price (Decimal-safe) ──────────────────────────────────
-            const totalPrice = txRoomType.pricePerNight.toNumber() * numberOfNights;
+            const totalPrice = txRoomType.pricePerNight.toNumber() * numberOfNights * numRooms;
 
             // ── 5. Atomic inventory increment ────────────────────────────────────
-            // Uses raw SQL UPDATE so PostgreSQL can evaluate the column-to-column
-            // condition (bookedRooms < totalRooms) atomically per row under an
-            // implicit row-level lock. Concurrent requests that race here will
-            // only update rows that still have remaining capacity.
-            const updateResult = await tx.$executeRaw`
+            // Guard: (totalRooms - bookedRooms) >= numRooms so we only update
+            // rows that actually have enough capacity for the full request.
+            // Throwing RoomUnavailableError here causes Prisma to automatically
+            // roll back any partial increments — NO manual decrement needed.
+            const updatedCount = await tx.$executeRaw`
                 UPDATE "RoomTypeInventory"
-                SET "bookedRooms" = "bookedRooms" + 1
+                SET "bookedRooms" = "bookedRooms" + ${numRooms}
                 WHERE "roomTypeId" = ${roomTypeId}
                   AND date >= ${inDate}
-                  AND date < ${outDate}
-                  AND "bookedRooms" < "totalRooms"
+                  AND date <  ${outDate}
+                  AND ("totalRooms" - "bookedRooms") >= ${numRooms}
             `;
-            const updatedCount = updateResult;
 
-            // If we couldn't update every night, some nights are fully booked.
-            // Roll back the partial increments by decrementing the rows we touched.
             if (updatedCount !== numberOfNights) {
-                if (updatedCount > 0) {
-                    await tx.$executeRaw`
-                        UPDATE "RoomTypeInventory"
-                        SET "bookedRooms" = "bookedRooms" - 1
-                        WHERE "roomTypeId" = ${roomTypeId}
-                          AND date >= ${inDate}
-                          AND date < ${outDate}
-                    `;
-                }
-                throw new RoomUnavailableError();
+                // Some nights don't have enough capacity.
+                // Query the current minimum available to surface to the user.
+                const avail = await tx.$queryRaw`
+                    SELECT COALESCE(MIN("totalRooms" - "bookedRooms"), 0)::int AS min_available
+                    FROM "RoomTypeInventory"
+                    WHERE "roomTypeId" = ${roomTypeId}
+                      AND date >= ${inDate}
+                      AND date <  ${outDate}
+                `;
+                const availableRooms = avail[0]?.min_available ?? 0;
+                throw new RoomUnavailableError(availableRooms);
             }
 
             // ── 6. Create Booking row ─────────────────────────────────────────────
@@ -206,11 +334,12 @@ export const createBooking = async (req, res) => {
                     roomTypeId,
                     hotelId: txRoomType.hotel.id,
                     guests: guestCount,
+                    numberOfRooms: numRooms,
                     checkInDate: inDate,
                     checkOutDate: outDate,
                     totalPrice,
                     status: "payment_pending",
-                    paymentMethod: "PAY_AT_HOTEL",
+                    paymentMethod: "STRIPE",
                     expiresAt: new Date(Date.now() + 15 * 60000),
                 },
             });
@@ -221,10 +350,13 @@ export const createBooking = async (req, res) => {
     } catch (error) {
 
         if (error instanceof RoomUnavailableError) {
-            return res.status(400).json({ success: false, message: error.message });
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+                availableRooms: error.availableRooms,
+            });
         }
 
-        // Guest count validation error
         if (error.isGuestError) {
             return res.status(400).json({ success: false, message: error.message });
         }
@@ -251,13 +383,14 @@ export const createBooking = async (req, res) => {
                     <li><strong>Booking ID:</strong> ${booking.id}</li>
                     <li><strong>Hotel Name:</strong> ${roomTypeData.hotel.name}</li>
                     <li><strong>Room Type:</strong> ${roomTypeData.name}</li>
+                    <li><strong>Number of Rooms:</strong> ${booking.numberOfRooms}</li>
                     <li><strong>Location:</strong> ${roomTypeData.hotel.address}</li>
                     <li><strong>Check-In:</strong> ${booking.checkInDate.toDateString()}</li>
                     <li><strong>Check-Out:</strong> ${booking.checkOutDate.toDateString()}</li>
                     <li><strong>Guests:</strong> ${booking.guests}</li>
                     <li><strong>Total Amount:</strong> $${booking.totalPrice}</li>
                 </ul>
-                <p>We look forward to hosting you!</p>
+                <p>Please complete your payment to confirm the reservation. We look forward to hosting you!</p>
             `
         };
         await transporter.sendMail(mailOptions);
@@ -265,13 +398,12 @@ export const createBooking = async (req, res) => {
         console.error("[createBooking] Confirmation email failed:", emailError);
     }
 
-    return res.json({ success: true, message: "Booking successful" });
+    return res.json({ success: true, message: "Booking created — complete payment to confirm", booking });
 };
 
 // ---------------------------------------------------------------------------
 // GET /api/bookings/user
 // Returns all bookings for the current user, newest first.
-// Includes roomType (for images/name/amenities) — guests never see roomNumber.
 // ---------------------------------------------------------------------------
 export const getUserBookings = async (req, res) => {
     try {
@@ -295,12 +427,11 @@ export const getUserBookings = async (req, res) => {
             orderBy: { createdAt: 'desc' },
         });
 
-        // Normalize: attach roomType data onto `room` object for frontend compatibility.
-        // Frontend accesses booking.room.roomType, booking.room.images[0], etc.
+        // Normalize: attach roomType data onto `room` for frontend compatibility.
         const normalized = bookings.map(b => ({
             ...b,
             room: {
-                roomType: b.roomType.name,      // string e.g. "Luxury Suite"
+                roomType: b.roomType.name,
                 images: b.roomType.images,
                 amenities: b.roomType.amenities,
                 pricePerNight: b.roomType.pricePerNight,
@@ -319,7 +450,6 @@ export const getUserBookings = async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/bookings/hotel
 // Dashboard data for the hotel owner.
-// Response: { success, dashboardData: { bookings, totalBookings, totalRevenue } }
 // ---------------------------------------------------------------------------
 export const getHotelBookings = async (req, res) => {
     try {
@@ -343,8 +473,6 @@ export const getHotelBookings = async (req, res) => {
             orderBy: { createdAt: 'desc' },
         });
 
-        // Normalize: attach roomType name onto room object so dashboard template
-        // booking.room.roomType still works.
         const normalized = bookings.map(b => ({
             ...b,
             room: {
@@ -387,13 +515,17 @@ export const stripePayment = async (req, res) => {
 
         const stripeInstance = new stripe(process.env.STRIPE_SECRET_KEY);
 
+        const roomLabel = booking.numberOfRooms > 1
+            ? `${booking.numberOfRooms}x ${booking.roomType.name}`
+            : booking.roomType.name;
+
         const session = await stripeInstance.checkout.sessions.create({
             line_items: [
                 {
                     price_data: {
                         currency: 'usd',
                         product_data: {
-                            name: `${booking.roomType.hotel.name} — ${booking.roomType.name}`,
+                            name: `${booking.roomType.hotel.name} — ${roomLabel}`,
                         },
                         unit_amount: Math.round(totalPrice * 100),
                     },
